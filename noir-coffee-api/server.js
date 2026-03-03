@@ -110,6 +110,24 @@ app.post("/api/orders", async (req, res) => {
             items, // [{ product_id, product_name, price, quantity }]
         } = req.body;
 
+        // ─── Validate & lock table if dine_in ──────────────────────────
+        if (type === "dine_in" && table_number) {
+            const [[tbl]] = await conn.query(
+                "SELECT * FROM `tables` WHERE table_number = ? FOR UPDATE",
+                [table_number]
+            );
+            if (!tbl) {
+                await conn.rollback();
+                conn.release();
+                return res.status(400).json({ error: `Meja ${table_number} tidak ditemukan` });
+            }
+            if (tbl.status === "occupied") {
+                await conn.rollback();
+                conn.release();
+                return res.status(409).json({ error: `Meja ${table_number} sedang terpakai oleh pelanggan lain` });
+            }
+        }
+
         const subtotal = items.reduce((s, i) => s + i.price * i.quantity, 0);
         const tax = Math.round(subtotal * 0.1);
         const total = subtotal + tax;
@@ -151,6 +169,14 @@ app.post("/api/orders", async (req, res) => {
             );
         }
 
+        // ─── Mark table as occupied ─────────────────────────────────
+        if (type === "dine_in" && table_number) {
+            await conn.query(
+                "UPDATE `tables` SET status='occupied', updated_at=NOW() WHERE table_number=?",
+                [table_number]
+            );
+        }
+
         await conn.commit();
 
         const [[order]] = await conn.query(
@@ -180,6 +206,12 @@ app.patch("/api/orders/:orderNumber/status", async (req, res) => {
         if (!valid.includes(status)) {
             return res.status(400).json({ error: "Status tidak valid" });
         }
+        const [[existingOrder]] = await pool.query(
+            "SELECT * FROM orders WHERE order_number = ?",
+            [req.params.orderNumber]
+        );
+        if (!existingOrder) return res.status(404).json({ error: "Pesanan tidak ditemukan" });
+
         const [result] = await pool.query(
             "UPDATE orders SET status = ?, updated_at = NOW() WHERE order_number = ?",
             [status, req.params.orderNumber]
@@ -187,7 +219,83 @@ app.patch("/api/orders/:orderNumber/status", async (req, res) => {
         if (result.affectedRows === 0) {
             return res.status(404).json({ error: "Pesanan tidak ditemukan" });
         }
+
+        // ─── Release table when order done ───────────────────────────────
+        if (["completed", "cancelled"].includes(status) &&
+            existingOrder.type === "dine_in" && existingOrder.table_number) {
+            await pool.query(
+                "UPDATE `tables` SET status='available', updated_at=NOW() WHERE table_number=?",
+                [existingOrder.table_number]
+            );
+        }
+
         res.json({ success: true, status });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// ─── GET /api/tables ────────────────────────────────────────────────────────
+app.get("/api/tables", async (req, res) => {
+    try {
+        const [rows] = await pool.query(
+            "SELECT * FROM `tables` ORDER BY table_number"
+        );
+        res.json(rows);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// ─── POST /api/tables ───────────────────────────────────────────────────────
+app.post("/api/tables", async (req, res) => {
+    try {
+        const { table_number, capacity, location } = req.body;
+        if (!table_number) return res.status(400).json({ error: "Nomor meja wajib diisi" });
+        const [result] = await pool.query(
+            "INSERT INTO `tables` (table_number, capacity, location, status, created_at, updated_at) VALUES (?,?,?,'available',NOW(),NOW())",
+            [table_number.trim().toUpperCase(), capacity || 4, location || null]
+        );
+        const [[table]] = await pool.query("SELECT * FROM `tables` WHERE id = ?", [result.insertId]);
+        res.status(201).json(table);
+    } catch (err) {
+        if (err.code === "ER_DUP_ENTRY") return res.status(400).json({ error: "Nomor meja sudah ada" });
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// ─── PUT /api/tables/:id ────────────────────────────────────────────────────
+app.put("/api/tables/:id", async (req, res) => {
+    try {
+        const { table_number, capacity, location, status } = req.body;
+        if (!table_number) return res.status(400).json({ error: "Nomor meja wajib diisi" });
+        const validStatus = ["available", "occupied"];
+        if (status && !validStatus.includes(status)) {
+            return res.status(400).json({ error: "Status meja tidak valid" });
+        }
+        await pool.query(
+            "UPDATE `tables` SET table_number=?, capacity=?, location=?, status=?, updated_at=NOW() WHERE id=?",
+            [table_number.trim().toUpperCase(), capacity || 4, location || null, status || "available", req.params.id]
+        );
+        const [[table]] = await pool.query("SELECT * FROM `tables` WHERE id = ?", [req.params.id]);
+        if (!table) return res.status(404).json({ error: "Meja tidak ditemukan" });
+        res.json(table);
+    } catch (err) {
+        if (err.code === "ER_DUP_ENTRY") return res.status(400).json({ error: "Nomor meja sudah ada" });
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// ─── DELETE /api/tables/:id ─────────────────────────────────────────────────
+app.delete("/api/tables/:id", async (req, res) => {
+    try {
+        const [[table]] = await pool.query("SELECT * FROM `tables` WHERE id = ?", [req.params.id]);
+        if (!table) return res.status(404).json({ error: "Meja tidak ditemukan" });
+        if (table.status === "occupied") {
+            return res.status(400).json({ error: "Tidak bisa menghapus meja yang sedang terpakai" });
+        }
+        await pool.query("DELETE FROM `tables` WHERE id = ?", [req.params.id]);
+        res.json({ success: true });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
@@ -208,7 +316,13 @@ app.get("/api/stats", async (req, res) => {
         const [[{ total_products }]] = await pool.query(
             "SELECT COUNT(*) AS total_products FROM products WHERE is_available = 1"
         );
-        res.json({ total_orders, revenue, active_orders, total_products });
+        const [[{ total_tables }]] = await pool.query(
+            "SELECT COUNT(*) AS total_tables FROM `tables`"
+        );
+        const [[{ occupied_tables }]] = await pool.query(
+            "SELECT COUNT(*) AS occupied_tables FROM `tables` WHERE status = 'occupied'"
+        );
+        res.json({ total_orders, revenue, active_orders, total_products, total_tables, occupied_tables });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }

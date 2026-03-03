@@ -35,9 +35,16 @@ export default function App() {
   // ─── API State ───────────────────────────────────────────────────────────
   const [categories, setCategories] = useState([]);
   const [menu, setMenu] = useState([]);
-  const [stats, setStats] = useState({ total_orders: 0, revenue: 0, active_orders: 0, total_products: 0 });
+  const [stats, setStats] = useState({ total_orders: 0, revenue: 0, active_orders: 0, total_products: 0, total_tables: 0, occupied_tables: 0 });
   const [loadingMenu, setLoadingMenu] = useState(true);
   const [adminView, setAdminView] = useState("dashboard");
+
+  // ─── Tables State ───────────────────────────────────────────────
+  const [tables, setTables] = useState([]);
+  const [tableForm, setTableForm] = useState({ table_number: "", capacity: 4, location: "" });
+  const [editingTable, setEditingTable] = useState(null);
+  const [tableFormOpen, setTableFormOpen] = useState(false);
+  const [tableFormError, setTableFormError] = useState("");
 
   const fetchCategories = async () => {
     try {
@@ -55,6 +62,14 @@ export default function App() {
       setMenu(data);
     } catch { setMenu([]); }
     finally { setLoadingMenu(false); }
+  };
+
+  const fetchTables = async () => {
+    try {
+      const res = await fetch("/api/tables");
+      const data = await res.json();
+      setTables(Array.isArray(data) ? data : []);
+    } catch { setTables([]); }
   };
 
   const fetchOrders = async () => {
@@ -79,11 +94,18 @@ export default function App() {
     fetchMenu();
     fetchOrders();
     fetchStats();
+    fetchTables();
   }, []);
 
   useEffect(() => {
-    if (page === "admin") { fetchOrders(); fetchStats(); setAdminView("dashboard"); }
+    if (page === "admin") { fetchOrders(); fetchStats(); fetchTables(); setAdminView("dashboard"); }
   }, [page]);
+
+  // Poll tables every 10s to keep status fresh
+  useEffect(() => {
+    const id = setInterval(fetchTables, 10000);
+    return () => clearInterval(id);
+  }, []);
 
   const showToast = (msg) => {
     setToast(msg);
@@ -121,6 +143,7 @@ export default function App() {
       });
       setOrders(prev => prev.map(o => o.order_number === orderNumber ? { ...o, status } : o));
       fetchStats();
+      if (["completed", "cancelled"].includes(status)) fetchTables();
     } catch { showToast("Gagal mengubah status"); }
   };
 
@@ -134,8 +157,65 @@ export default function App() {
     } catch { setTrackResult("notfound"); }
   };
 
+  // ─── Table CRUD ────────────────────────────────────────────────────
+  const openAddTable = () => {
+    setEditingTable(null);
+    setTableForm({ table_number: "", capacity: 4, location: "" });
+    setTableFormError("");
+    setTableFormOpen(true);
+  };
+  const openEditTable = (t) => {
+    setEditingTable(t);
+    setTableForm({ table_number: t.table_number, capacity: t.capacity, location: t.location || "" });
+    setTableFormError("");
+    setTableFormOpen(true);
+  };
+  const saveTable = async () => {
+    if (!tableForm.table_number.trim()) return setTableFormError("Nomor meja wajib diisi");
+    setTableFormError("");
+    try {
+      const method = editingTable ? "PUT" : "POST";
+      const url = editingTable ? `/api/tables/${editingTable.id}` : "/api/tables";
+      const res = await fetch(url, {
+        method, headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...tableForm, capacity: Number(tableForm.capacity) }),
+      });
+      const data = await res.json();
+      if (!res.ok) return setTableFormError(data.error || "Gagal menyimpan meja");
+      setTableFormOpen(false);
+      fetchTables();
+      fetchStats();
+      showToast(editingTable ? "Meja diperbarui" : "Meja ditambahkan");
+    } catch { setTableFormError("Gagal menyimpan meja"); }
+  };
+  const deleteTable = async (id) => {
+    if (!window.confirm("Hapus meja ini?")) return;
+    try {
+      const res = await fetch(`/api/tables/${id}`, { method: "DELETE" });
+      const data = await res.json();
+      if (!res.ok) return showToast(data.error || "Gagal menghapus meja");
+      fetchTables();
+      fetchStats();
+      showToast("Meja dihapus");
+    } catch { showToast("Gagal menghapus meja"); }
+  };
+  const releaseTable = async (tableNumber) => {
+    try {
+      const tbl = tables.find(t => t.table_number === tableNumber);
+      if (!tbl) return;
+      await fetch(`/api/tables/${tbl.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ table_number: tbl.table_number, capacity: tbl.capacity, location: tbl.location, status: "available" }),
+      });
+      fetchTables();
+      showToast(`Meja ${tableNumber} dibebaskan`);
+    } catch { showToast("Gagal membebaskan meja"); }
+  };
+
   const submitOrder = async () => {
     if (!form.name.trim()) return showToast("Nama harus diisi!");
+    if (form.type === "dine_in" && !form.table) return showToast("Pilih nomor meja terlebih dahulu!");
     try {
       const body = {
         customer_name: form.name,
@@ -151,14 +231,19 @@ export default function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
-      if (!res.ok) throw new Error("Gagal membuat pesanan");
-      const order = await res.json();
-      setOrders(prev => [order, ...prev]);
-      setLastOrder(order);
+      const data = await res.json();
+      if (!res.ok) {
+        // Refresh tables if table was occupied by another customer
+        if (res.status === 409) { fetchTables(); setForm(f => ({ ...f, table: "" })); }
+        throw new Error(data.error || "Gagal membuat pesanan");
+      }
+      setOrders(prev => [data, ...prev]);
+      setLastOrder(data);
       setCart([]);
       setForm({ name: "", phone: "", type: "dine_in", table: "", payment: "cash", notes: "" });
+      fetchTables();
       setPage(PAGES.CONFIRM);
-    } catch (err) { showToast("Gagal: " + err.message); }
+    } catch (err) { showToast(err.message); }
   };
 
   const filteredMenu = activeCat === "all" ? menu : menu.filter(m => m.category_slug === activeCat);
@@ -488,9 +573,51 @@ export default function App() {
               </select>
             </div>
             {form.type === "dine_in" && (
-              <div>
-                <label style={{ display: "block", fontSize: ".65rem", letterSpacing: ".2em", textTransform: "uppercase", color: "#8a8a7e", marginBottom: ".4rem" }}>Nomor Meja</label>
-                <input className="input-noir" placeholder="Contoh: A1" value={form.table} onChange={e => setForm(f => ({ ...f, table: e.target.value }))} />
+              <div style={{ gridColumn: "span 2" }}>
+                <label style={{ display: "block", fontSize: ".65rem", letterSpacing: ".2em", textTransform: "uppercase", color: "#8a8a7e", marginBottom: ".75rem" }}>
+                  Pilih Meja *
+                  <button type="button" onClick={fetchTables} style={{ marginLeft: ".75rem", background: "none", border: "none", color: "#c8a96e", fontSize: ".6rem", letterSpacing: ".15em", cursor: "pointer", textTransform: "uppercase" }}>↺ Refresh</button>
+                </label>
+                {tables.length === 0 ? (
+                  <div style={{ padding: "1rem", background: "#1a1a16", border: "1px solid rgba(138,138,126,.15)", fontSize: ".82rem", color: "#4a4a42", textAlign: "center" }}>
+                    Tidak ada meja tersedia
+                  </div>
+                ) : (
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(90px, 1fr))", gap: ".5rem" }}>
+                    {tables.map(t => {
+                      const isOccupied = t.status === "occupied";
+                      const isSelected = form.table === t.table_number;
+                      return (
+                        <button key={t.id} type="button" onClick={() => !isOccupied && setForm(f => ({ ...f, table: t.table_number }))}
+                          disabled={isOccupied}
+                          style={{
+                            padding: ".6rem .4rem", background: isOccupied ? "rgba(30,30,26,.5)" : isSelected ? "rgba(200,169,110,.15)" : "#1a1a16",
+                            border: isOccupied ? "1px solid rgba(138,138,126,.1)" : isSelected ? "1px solid #c8a96e" : "1px solid rgba(138,138,126,.2)",
+                            color: isOccupied ? "#4a4a42" : isSelected ? "#c8a96e" : "#8a8a7e",
+                            cursor: isOccupied ? "not-allowed" : "pointer", transition: "all .2s", textAlign: "center", position: "relative",
+                          }}>
+                          <div style={{ fontSize: ".9rem", fontFamily: "'Cormorant Garamond',serif", marginBottom: ".2rem", lineHeight: 1 }}>{t.table_number}</div>
+                          <div style={{ fontSize: ".55rem", letterSpacing: ".12em", textTransform: "uppercase" }}>
+                            {isOccupied ? "Terpakai" : `${t.capacity} kursi`}
+                          </div>
+                          {isOccupied && (
+                            <div style={{ position: "absolute", top: 4, right: 4, width: 6, height: 6, borderRadius: "50%", background: "#c05050" }} />
+                          )}
+                          {!isOccupied && (
+                            <div style={{ position: "absolute", top: 4, right: 4, width: 6, height: 6, borderRadius: "50%", background: "#5c8a5c" }} />
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+                {form.table && (
+                  <div style={{ marginTop: ".5rem", fontSize: ".72rem", color: "#c8a96e", letterSpacing: ".1em" }}>
+                    ✓ Meja {form.table} dipilih
+                    <button type="button" onClick={() => setForm(f => ({ ...f, table: "" }))}
+                      style={{ marginLeft: ".75rem", background: "none", border: "none", color: "#4a4a42", cursor: "pointer", fontSize: ".7rem" }}>✕ batal</button>
+                  </div>
+                )}
               </div>
             )}
             <div>
@@ -639,7 +766,7 @@ export default function App() {
           {/* Sidebar */}
           <div className="admin-sidebar" style={{ background: "#1a1a16", borderRight: "1px solid rgba(138,138,126,.1)", padding: "2rem 0" }}>
             <div style={{ fontSize: ".6rem", letterSpacing: ".3em", textTransform: "uppercase", color: "#4a4a42", padding: "0 1.5rem", marginBottom: "1rem" }}>Manajemen</div>
-            {[{ icon: "⬡", label: "Dashboard", view: "dashboard" }, { icon: "◈", label: "Pesanan", view: "pesanan" }, { icon: "◎", label: "Produk", view: "produk" }].map(({ icon, label, view }) => (
+            {[{ icon: "⬡", label: "Dashboard", view: "dashboard" }, { icon: "◈", label: "Pesanan", view: "pesanan" }, { icon: "◉", label: "Meja", view: "meja" }, { icon: "◎", label: "Produk", view: "produk" }].map(({ icon, label, view }) => (
               <button key={label} onClick={() => setAdminView(view)} style={{ background: "none", border: "none", borderLeft: `2px solid ${adminView === view ? "#c8a96e" : "transparent"}`, padding: ".65rem 1.5rem", display: "flex", gap: ".75rem", alignItems: "center", color: adminView === view ? "#c8a96e" : "#8a8a7e", fontSize: ".8rem", width: "100%", textAlign: "left", cursor: "pointer", transition: "color .2s, border-color .2s" }}>
                 {icon} {label}
               </button>
@@ -659,7 +786,7 @@ export default function App() {
                 { label: "Pesanan Hari Ini", value: stats.total_orders, sub: "Total order masuk", icon: "📋" },
                 { label: "Pendapatan", value: "Rp " + Number(stats.revenue).toLocaleString("id-ID"), sub: "Order selesai (hari ini)", icon: "💰" },
                 { label: "Pesanan Aktif", value: stats.active_orders, sub: "Perlu diproses", icon: "⏳" },
-                { label: "Total Produk", value: stats.total_products, sub: "Produk aktif", icon: "☕" },
+                { label: "Meja Terpakai", value: `${stats.occupied_tables || 0}/${stats.total_tables || 0}`, sub: "Dari total meja", icon: "🪑" },
               ].map(s => (
                 <div key={s.label} className="stat-card" style={{ background: "#0a0a08", padding: "2rem 1.5rem" }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: ".75rem" }}>
@@ -711,6 +838,138 @@ export default function App() {
                 </tbody>
               </table>
             </div>}
+
+            {/* ─── MEJA VIEW ─────────────────────────────────────────────── */}
+            {adminView === "meja" && (
+              <div>
+                {/* Table Form Modal */}
+                {tableFormOpen && (
+                  <div style={{ position: "fixed", inset: 0, zIndex: 500 }}>
+                    <div onClick={() => setTableFormOpen(false)} style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,.75)" }} />
+                    <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%,-50%)", background: "#1a1a16", border: "1px solid rgba(200,169,110,.2)", padding: "2.5rem", width: "min(420px,90vw)" }}>
+                      <h3 className="serif" style={{ fontSize: "1.5rem", marginBottom: "1.75rem" }}>{editingTable ? "Edit Meja" : "Tambah Meja"}</h3>
+                      {tableFormError && (
+                        <div style={{ marginBottom: "1rem", padding: ".7rem 1rem", borderLeft: "2px solid #c05050", background: "rgba(139,46,46,.1)", fontSize: ".8rem", color: "#d06060" }}>{tableFormError}</div>
+                      )}
+                      <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
+                        <div>
+                          <label style={{ display: "block", fontSize: ".6rem", letterSpacing: ".2em", textTransform: "uppercase", color: "#8a8a7e", marginBottom: ".4rem" }}>Nomor Meja *</label>
+                          <input className="input-noir" placeholder="Contoh: A1" value={tableForm.table_number} onChange={e => setTableForm(f => ({ ...f, table_number: e.target.value.toUpperCase() }))} />
+                        </div>
+                        <div>
+                          <label style={{ display: "block", fontSize: ".6rem", letterSpacing: ".2em", textTransform: "uppercase", color: "#8a8a7e", marginBottom: ".4rem" }}>Kapasitas (kursi)</label>
+                          <input className="input-noir" type="number" min={1} max={20} placeholder="4" value={tableForm.capacity} onChange={e => setTableForm(f => ({ ...f, capacity: e.target.value }))} />
+                        </div>
+                        <div>
+                          <label style={{ display: "block", fontSize: ".6rem", letterSpacing: ".2em", textTransform: "uppercase", color: "#8a8a7e", marginBottom: ".4rem" }}>Lokasi</label>
+                          <input className="input-noir" placeholder="Contoh: Area Dalam, Area Luar" value={tableForm.location} onChange={e => setTableForm(f => ({ ...f, location: e.target.value }))} />
+                        </div>
+                      </div>
+                      <div style={{ display: "flex", gap: ".75rem", marginTop: "2rem" }}>
+                        <button className="btn-outline" style={{ flex: 1 }} onClick={() => setTableFormOpen(false)}>Batal</button>
+                        <button className="btn-gold" style={{ flex: 1 }} onClick={saveTable}>{editingTable ? "Simpan" : "Tambah"}</button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Header */}
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "2rem" }}>
+                  <div>
+                    <div style={{ fontSize: ".65rem", letterSpacing: ".3em", textTransform: "uppercase", color: "#c8a96e", marginBottom: ".25rem" }}>Manajemen Meja</div>
+                    <div style={{ color: "#8a8a7e", fontSize: ".82rem" }}>
+                      {tables.filter(t => t.status === "available").length} tersedia · {tables.filter(t => t.status === "occupied").length} terpakai · {tables.length} total
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", gap: ".75rem", alignItems: "center" }}>
+                    <button onClick={fetchTables} style={{ background: "none", border: "1px solid rgba(138,138,126,.2)", color: "#8a8a7e", padding: ".5rem .9rem", fontSize: ".65rem", letterSpacing: ".15em", textTransform: "uppercase", transition: "all .2s" }}
+                      onMouseOver={e => e.currentTarget.style.borderColor = "rgba(200,169,110,.4)"}
+                      onMouseOut={e => e.currentTarget.style.borderColor = "rgba(138,138,126,.2)"}>↺ Refresh</button>
+                    <button className="btn-gold" onClick={openAddTable}>+ Tambah Meja</button>
+                  </div>
+                </div>
+
+                {/* Floor Plan Visual */}
+                <div style={{ marginBottom: "2.5rem" }}>
+                  <div style={{ fontSize: ".6rem", letterSpacing: ".25em", textTransform: "uppercase", color: "#c8a96e", marginBottom: "1.25rem", display: "flex", gap: "1.5rem", alignItems: "center" }}>
+                    <span>Denah Meja</span>
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: ".4rem", color: "#5c8a5c" }}><span style={{ width: 8, height: 8, borderRadius: "50%", background: "#5c8a5c", display: "inline-block" }} />Tersedia</span>
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: ".4rem", color: "#c05050" }}><span style={{ width: 8, height: 8, borderRadius: "50%", background: "#c05050", display: "inline-block" }} />Terpakai</span>
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(110px,1fr))", gap: ".75rem" }}>
+                    {tables.map(t => {
+                      const isOccupied = t.status === "occupied";
+                      return (
+                        <div key={t.id} style={{
+                          position: "relative", padding: "1.25rem .75rem .9rem", background: isOccupied ? "rgba(192,80,80,.08)" : "rgba(92,138,92,.06)",
+                          border: `1px solid ${isOccupied ? "rgba(192,80,80,.3)" : "rgba(92,138,92,.25)"}`, textAlign: "center", transition: "all .2s",
+                        }}>
+                          <div style={{ position: "absolute", top: 6, right: 7, width: 7, height: 7, borderRadius: "50%", background: isOccupied ? "#c05050" : "#5c8a5c" }} />
+                          <div className="serif" style={{ fontSize: "1.8rem", color: isOccupied ? "#c05050" : "#c8a96e", lineHeight: 1, marginBottom: ".3rem" }}>{t.table_number}</div>
+                          <div style={{ fontSize: ".58rem", letterSpacing: ".12em", textTransform: "uppercase", color: "#8a8a7e", marginBottom: ".2rem" }}>{t.capacity} kursi</div>
+                          {t.location && <div style={{ fontSize: ".55rem", color: "#4a4a42", letterSpacing: ".08em" }}>{t.location}</div>}
+                          <div style={{ fontSize: ".6rem", letterSpacing: ".12em", textTransform: "uppercase", marginTop: ".4rem", color: isOccupied ? "#c05050" : "#5c8a5c" }}>
+                            {isOccupied ? "Terpakai" : "Tersedia"}
+                          </div>
+                          {isOccupied && (
+                            <button onClick={() => releaseTable(t.table_number)}
+                              style={{ marginTop: ".5rem", background: "none", border: "1px solid rgba(192,80,80,.3)", color: "#c05050", padding: ".3rem .5rem", fontSize: ".55rem", letterSpacing: ".1em", textTransform: "uppercase", cursor: "pointer", width: "100%", transition: "all .2s" }}
+                              onMouseOver={e => { e.currentTarget.style.background = "rgba(192,80,80,.15)"; }}
+                              onMouseOut={e => { e.currentTarget.style.background = "none"; }}>
+                              Bebaskan
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Table List */}
+                <div style={{ fontSize: ".65rem", letterSpacing: ".3em", textTransform: "uppercase", color: "#c8a96e", marginBottom: "1rem" }}>Daftar Meja</div>
+                <div style={{ overflowX: "auto" }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: ".8rem" }}>
+                    <thead>
+                      <tr>
+                        {["Nomor Meja", "Kapasitas", "Lokasi", "Status", "Aksi"].map(h => (
+                          <th key={h} style={{ textAlign: "left", padding: ".65rem 1rem", fontSize: ".6rem", letterSpacing: ".2em", textTransform: "uppercase", color: "#8a8a7e", borderBottom: "1px solid rgba(138,138,126,.15)", fontWeight: 400 }}>{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {tables.map(t => (
+                        <tr key={t.id} onMouseOver={e => e.currentTarget.style.background = "rgba(200,169,110,.02)"} onMouseOut={e => e.currentTarget.style.background = "none"}>
+                          <td style={{ padding: ".8rem 1rem", borderBottom: "1px solid rgba(138,138,126,.07)", fontFamily: "'Cormorant Garamond',serif", fontSize: "1rem", color: "#c8a96e" }}>{t.table_number}</td>
+                          <td style={{ padding: ".8rem 1rem", borderBottom: "1px solid rgba(138,138,126,.07)", color: "#8a8a7e" }}>{t.capacity} orang</td>
+                          <td style={{ padding: ".8rem 1rem", borderBottom: "1px solid rgba(138,138,126,.07)", color: "#8a8a7e" }}>{t.location || "—"}</td>
+                          <td style={{ padding: ".8rem 1rem", borderBottom: "1px solid rgba(138,138,126,.07)" }}>
+                            <span style={{ border: `1px solid ${t.status === "occupied" ? "rgba(192,80,80,.4)" : "rgba(92,138,92,.4)"}`, color: t.status === "occupied" ? "#c05050" : "#5c8a5c", padding: ".2rem .6rem", fontSize: ".6rem", letterSpacing: ".15em", textTransform: "uppercase" }}>
+                              {t.status === "occupied" ? "Terpakai" : "Tersedia"}
+                            </span>
+                          </td>
+                          <td style={{ padding: ".8rem 1rem", borderBottom: "1px solid rgba(138,138,126,.07)" }}>
+                            <div style={{ display: "flex", gap: ".5rem" }}>
+                              <button onClick={() => openEditTable(t)}
+                                style={{ background: "none", border: "1px solid rgba(138,138,126,.2)", color: "#8a8a7e", padding: ".3rem .6rem", fontSize: ".65rem", letterSpacing: ".12em", textTransform: "uppercase", cursor: "pointer", transition: "all .2s" }}
+                                onMouseOver={e => { e.currentTarget.style.borderColor = "rgba(200,169,110,.4)"; e.currentTarget.style.color = "#c8a96e"; }}
+                                onMouseOut={e => { e.currentTarget.style.borderColor = "rgba(138,138,126,.2)"; e.currentTarget.style.color = "#8a8a7e"; }}>
+                                Edit
+                              </button>
+                              <button onClick={() => deleteTable(t.id)} disabled={t.status === "occupied"}
+                                style={{ background: "none", border: "1px solid rgba(138,138,126,.2)", color: t.status === "occupied" ? "#4a4a42" : "#8a8a7e", padding: ".3rem .6rem", fontSize: ".65rem", letterSpacing: ".12em", textTransform: "uppercase", cursor: t.status === "occupied" ? "not-allowed" : "pointer", transition: "all .2s", opacity: t.status === "occupied" ? .4 : 1 }}
+                                onMouseOver={e => { if (t.status !== "occupied") { e.currentTarget.style.borderColor = "rgba(192,80,80,.4)"; e.currentTarget.style.color = "#c05050"; } }}
+                                onMouseOut={e => { e.currentTarget.style.borderColor = "rgba(138,138,126,.2)"; e.currentTarget.style.color = "#8a8a7e"; }}>
+                                Hapus
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
 
             {/* Products list */}
             {(adminView === "dashboard" || adminView === "produk") && <div style={{ marginTop: adminView === "produk" ? "0" : "3rem" }}>
