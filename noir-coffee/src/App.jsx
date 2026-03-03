@@ -525,47 +525,47 @@ export default function App() {
 
       {/* Navbar */}
       {page !== PAGES.LOGIN && (
-      <nav style={{ position: "fixed", top: 0, left: 0, right: 0, zIndex: 100, padding: "1.1rem 2rem", display: "flex", alignItems: "center", justifyContent: "space-between", borderBottom: "1px solid rgba(200,169,110,.12)", background: "rgba(10,10,8,.92)", backdropFilter: "blur(12px)" }}>
-        <button onClick={() => setPage(currentUser || page !== PAGES.LOGIN ? PAGES.MENU : PAGES.LOGIN)} style={{ background: "none", border: "none", color: "#f0ede6", fontSize: "1.2rem", letterSpacing:".25em", textTransform: "uppercase", fontFamily: "'Cormorant Garamond',serif", cursor: "pointer" }}>
-          Noir <span style={{ color: "#c8a96e" }}>●</span> Coffee
-        </button>
-        <div style={{ display: "flex", gap: "2rem", alignItems: "center" }} className="nav-links">
-          {[{ label: "Menu", p: PAGES.MENU }, { label: "Lacak", p: PAGES.TRACK }].map(({ label, p }) => (
-            <button key={p} onClick={() => setPage(p)} style={{ background: "none", border: "none", color: page === p ? "#c8a96e" : "#8a8a7e", fontSize: ".7rem", letterSpacing: ".2em", textTransform: "uppercase", transition: "color .2s" }}>{label}</button>
-          ))}
-          {currentUser && (
-            <button onClick={() => setPage(PAGES.HISTORY)} style={{ background: "none", border: "none", color: page === PAGES.HISTORY ? "#c8a96e" : "#8a8a7e", fontSize: ".7rem", letterSpacing: ".2em", textTransform: "uppercase", transition: "color .2s" }}>Riwayat</button>
-          )}
-          {currentUser?.role === "admin" && (
-            <button onClick={() => setPage(PAGES.ADMIN)} style={{ background: "none", border: "none", color: page === PAGES.ADMIN ? "#c8a96e" : "#8a8a7e", fontSize: ".7rem", letterSpacing: ".2em", textTransform: "uppercase", transition: "color .2s" }}>Admin</button>
-          )}
-          {/* Auth */}
-          {!currentUser ? (
-            <button onClick={() => { setAuthTab("login"); setAuthModal("login"); setAuthError(""); setAuthForm({ name: "", email: "", password: "" }); }}
-              style={{ background: "none", border: "1px solid rgba(200,169,110,.35)", color: "#c8a96e", padding: ".45rem 1rem", fontSize: ".7rem", letterSpacing: ".15em", textTransform: "uppercase" }}>
-              Masuk
-            </button>
-          ) : (
-            <div style={{ display: "flex", alignItems: "center", gap: ".75rem" }}>
-              <span style={{ fontSize: ".65rem", letterSpacing: ".1em", color: ROLE_COLOR[currentUser.role] || "#c8a96e", border: `1px solid ${ROLE_COLOR[currentUser.role] || "#c8a96e"}50`, padding: ".2rem .5rem", textTransform: "uppercase" }}>
-                {ROLE_LABEL[currentUser.role] || currentUser.role}
-              </span>
-              <span style={{ fontSize: ".8rem", color: "#f0ede6" }}>{currentUser.name}</span>
-              <button onClick={logout} style={{ background: "none", border: "none", color: "#4a4a42", fontSize: ".7rem", letterSpacing: ".15em", textTransform: "uppercase", cursor: "pointer", transition: "color .2s" }}
-                onMouseOver={e => e.currentTarget.style.color = "#c05050"} onMouseOut={e => e.currentTarget.style.color = "#4a4a42"}>
-                Keluar
-              </button>
-            </div>
-          )}
-          <button onClick={() => setCartOpen(true)} style={{ background: "none", border: "1px solid rgba(200,169,110,.35)", color: "#c8a96e", padding: ".45rem 1rem", display: "flex", alignItems: "center", gap: ".5rem", fontSize: ".7rem", letterSpacing: ".15em", textTransform: "uppercase", transition: "all .2s" }}
-            onMouseOver={e => e.currentTarget.style.background = "rgba(200,169,110,.1)"}
-            onMouseOut={e => e.currentTarget.style.background = "none"}>
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M6 2L3 6v14a2 2 0 002 2h14a2 2 0 002-2V6l-3-4zM3 6h18M16 10a4 4 0 01-8 0" /></svg>
-            Keranjang
-            {cartCount > 0 && <span style={{ background: "#c8a96e", color: "#0a0a08", borderRadius: "50%", width: 18, height: 18, display: "flex", alignItems: "center", justifyContent: "center", fontSize: ".65rem", fontWeight: 500 }}>{cartCount}</span>}
+        <nav style={{ position: "fixed", top: 0, left: 0, right: 0, zIndex: 100, padding: "1.1rem 2rem", display: "flex", alignItems: "center", justifyContent: "space-between", borderBottom: "1px solid rgba(200,169,110,.12)", background: "rgba(10,10,8,.92)", backdropFilter: "blur(12px)" }}>
+          <button onClick={() => setPage(currentUser || page !== PAGES.LOGIN ? PAGES.MENU : PAGES.LOGIN)} style={{ background: "none", border: "none", color: "#f0ede6", fontSize: "1.2rem", letterSpacing: ".25em", textTransform: "uppercase", fontFamily: "'Cormorant Garamond',serif", cursor: "pointer" }}>
+            Noir <span style={{ color: "#c8a96e" }}>●</span> Coffee
           </button>
-        </div>
-      </nav>
+          <div style={{ display: "flex", gap: "2rem", alignItems: "center" }} className="nav-links">
+            {[{ label: "Menu", p: PAGES.MENU }, { label: "Lacak", p: PAGES.TRACK }].map(({ label, p }) => (
+              <button key={p} onClick={() => setPage(p)} style={{ background: "none", border: "none", color: page === p ? "#c8a96e" : "#8a8a7e", fontSize: ".7rem", letterSpacing: ".2em", textTransform: "uppercase", transition: "color .2s" }}>{label}</button>
+            ))}
+            {currentUser && (
+              <button onClick={() => setPage(PAGES.HISTORY)} style={{ background: "none", border: "none", color: page === PAGES.HISTORY ? "#c8a96e" : "#8a8a7e", fontSize: ".7rem", letterSpacing: ".2em", textTransform: "uppercase", transition: "color .2s" }}>Riwayat</button>
+            )}
+            {currentUser?.role === "admin" && (
+              <button onClick={() => setPage(PAGES.ADMIN)} style={{ background: "none", border: "none", color: page === PAGES.ADMIN ? "#c8a96e" : "#8a8a7e", fontSize: ".7rem", letterSpacing: ".2em", textTransform: "uppercase", transition: "color .2s" }}>Admin</button>
+            )}
+            {/* Auth */}
+            {!currentUser ? (
+              <button onClick={() => { setAuthTab("login"); setAuthModal("login"); setAuthError(""); setAuthForm({ name: "", email: "", password: "" }); }}
+                style={{ background: "none", border: "1px solid rgba(200,169,110,.35)", color: "#c8a96e", padding: ".45rem 1rem", fontSize: ".7rem", letterSpacing: ".15em", textTransform: "uppercase" }}>
+                Masuk
+              </button>
+            ) : (
+              <div style={{ display: "flex", alignItems: "center", gap: ".75rem" }}>
+                <span style={{ fontSize: ".65rem", letterSpacing: ".1em", color: ROLE_COLOR[currentUser.role] || "#c8a96e", border: `1px solid ${ROLE_COLOR[currentUser.role] || "#c8a96e"}50`, padding: ".2rem .5rem", textTransform: "uppercase" }}>
+                  {ROLE_LABEL[currentUser.role] || currentUser.role}
+                </span>
+                <span style={{ fontSize: ".8rem", color: "#f0ede6" }}>{currentUser.name}</span>
+                <button onClick={logout} style={{ background: "none", border: "none", color: "#4a4a42", fontSize: ".7rem", letterSpacing: ".15em", textTransform: "uppercase", cursor: "pointer", transition: "color .2s" }}
+                  onMouseOver={e => e.currentTarget.style.color = "#c05050"} onMouseOut={e => e.currentTarget.style.color = "#4a4a42"}>
+                  Keluar
+                </button>
+              </div>
+            )}
+            <button onClick={() => setCartOpen(true)} style={{ background: "none", border: "1px solid rgba(200,169,110,.35)", color: "#c8a96e", padding: ".45rem 1rem", display: "flex", alignItems: "center", gap: ".5rem", fontSize: ".7rem", letterSpacing: ".15em", textTransform: "uppercase", transition: "all .2s" }}
+              onMouseOver={e => e.currentTarget.style.background = "rgba(200,169,110,.1)"}
+              onMouseOut={e => e.currentTarget.style.background = "none"}>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M6 2L3 6v14a2 2 0 002 2h14a2 2 0 002-2V6l-3-4zM3 6h18M16 10a4 4 0 01-8 0" /></svg>
+              Keranjang
+              {cartCount > 0 && <span style={{ background: "#c8a96e", color: "#0a0a08", borderRadius: "50%", width: 18, height: 18, display: "flex", alignItems: "center", justifyContent: "center", fontSize: ".65rem", fontWeight: 500 }}>{cartCount}</span>}
+            </button>
+          </div>
+        </nav>
       )}
 
       {/* Cart Sidebar */}
@@ -659,7 +659,7 @@ export default function App() {
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                   <div style={{ display: "flex", alignItems: "center", gap: "1rem" }}>
                     <div style={{ width: 40, height: 40, border: "1px solid rgba(138,138,126,.25)", borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#8a8a7e" strokeWidth="1.5"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.58-7 8-7s8 3 8 7"/></svg>
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#8a8a7e" strokeWidth="1.5"><circle cx="12" cy="8" r="4" /><path d="M4 20c0-4 3.58-7 8-7s8 3 8 7" /></svg>
                     </div>
                     <div>
                       <div style={{ fontSize: ".75rem", letterSpacing: ".2em", textTransform: "uppercase", color: "#f0ede6", marginBottom: ".2rem" }}>Tamu</div>
@@ -680,7 +680,7 @@ export default function App() {
                   onMouseOut={e => { if (loginPageView !== "user") { e.currentTarget.closest("div").style.borderColor = "rgba(138,138,126,.18)"; e.currentTarget.closest("div").style.background = "#111110"; } }}>
                   <div style={{ display: "flex", alignItems: "center", gap: "1rem" }}>
                     <div style={{ width: 40, height: 40, border: `1px solid ${loginPageView === "user" ? "rgba(200,169,110,.5)" : "rgba(138,138,126,.25)"}`, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, transition: "border-color .25s" }}>
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={loginPageView === "user" ? "#c8a96e" : "#8a8a7e"} strokeWidth="1.5"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.58-7 8-7s8 3 8 7"/><path d="M16 3.5c1.66 0 3 1.34 3 3M19 8a3 3 0 010 0" strokeDasharray="1 2"/></svg>
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={loginPageView === "user" ? "#c8a96e" : "#8a8a7e"} strokeWidth="1.5"><circle cx="12" cy="8" r="4" /><path d="M4 20c0-4 3.58-7 8-7s8 3 8 7" /><path d="M16 3.5c1.66 0 3 1.34 3 3M19 8a3 3 0 010 0" strokeDasharray="1 2" /></svg>
                     </div>
                     <div>
                       <div style={{ fontSize: ".75rem", letterSpacing: ".2em", textTransform: "uppercase", color: loginPageView === "user" ? "#c8a96e" : "#f0ede6", marginBottom: ".2rem", transition: "color .25s" }}>Pengguna</div>
@@ -746,7 +746,7 @@ export default function App() {
                   onMouseOut={e => { if (loginPageView !== "admin") { e.currentTarget.closest("div").style.borderColor = "rgba(138,138,126,.18)"; e.currentTarget.closest("div").style.background = "#111110"; } }}>
                   <div style={{ display: "flex", alignItems: "center", gap: "1rem" }}>
                     <div style={{ width: 40, height: 40, border: `1px solid ${loginPageView === "admin" ? "rgba(96,221,96,.4)" : "rgba(138,138,126,.25)"}`, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, transition: "border-color .25s" }}>
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={loginPageView === "admin" ? "#60dd60" : "#8a8a7e"} strokeWidth="1.5"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={loginPageView === "admin" ? "#60dd60" : "#8a8a7e"} strokeWidth="1.5"><rect x="3" y="11" width="18" height="11" rx="2" /><path d="M7 11V7a5 5 0 0110 0v4" /></svg>
                     </div>
                     <div>
                       <div style={{ fontSize: ".75rem", letterSpacing: ".2em", textTransform: "uppercase", color: loginPageView === "admin" ? "#60dd60" : "#f0ede6", marginBottom: ".2rem", transition: "color .25s" }}>Admin</div>
