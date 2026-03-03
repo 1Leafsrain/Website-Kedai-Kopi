@@ -2,6 +2,9 @@ import { useState, useEffect } from "react";
 
 const rp = (n) => "Rp " + Number(n).toLocaleString("id-ID");
 
+const CAT_ICONS = { kopi: "☕", "non-kopi": "🧋", minuman: "🥤", makanan: "🍽️", dessert: "🍰", camilan: "🫙", snack: "🫙", paket: "📦", teh: "🫖" };
+const getCatIcon = (slug) => CAT_ICONS[(slug || "").toLowerCase()] || "◉";
+
 // --- Grain SVG background ---
 const GrainBg = () => (
   <svg style={{ position: "fixed", inset: 0, width: "100%", height: "100%", pointerEvents: "none", zIndex: 999, opacity: 0.35 }}>
@@ -34,6 +37,7 @@ export default function App() {
   const [menu, setMenu] = useState([]);
   const [stats, setStats] = useState({ total_orders: 0, revenue: 0, active_orders: 0, total_products: 0 });
   const [loadingMenu, setLoadingMenu] = useState(true);
+  const [adminView, setAdminView] = useState("dashboard");
 
   const fetchCategories = async () => {
     try {
@@ -78,7 +82,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (page === "admin") { fetchOrders(); fetchStats(); }
+    if (page === "admin") { fetchOrders(); fetchStats(); setAdminView("dashboard"); }
   }, [page]);
 
   const showToast = (msg) => {
@@ -166,9 +170,8 @@ export default function App() {
   if (!mounted) return null;
 
   return (
-    <div style={{ fontFamily: "'Inconsolata', monospace", background: "#0a0a08", color: "#f0ede6", minHeight: "100vh", position: "relative", overflowX: "hidden" }}>
+    <div style={{ fontFamily: "'Inconsolata', monospace", background: "#0a0a08", color: "#f0ede6", minHeight: "100vh", width: "100%", position: "relative", overflowX: "hidden" }}>
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,600;1,300;1,400&family=Inconsolata:wght@300;400;500&display=swap');
         * { box-sizing: border-box; margin: 0; padding: 0; }
         ::-webkit-scrollbar { width: 4px; }
         ::-webkit-scrollbar-track { background: #0a0a08; }
@@ -189,6 +192,39 @@ export default function App() {
         .input-noir { width:100%; background:#1a1a16; border:1px solid rgba(138,138,126,.2); color:#f0ede6; padding:.7rem 1rem; font-size:.9rem; outline:none; transition: border-color .2s; }
         .input-noir:focus { border-color:#c8a96e; }
         .input-noir::placeholder { color:#4a4a42; }
+        .card-lift { transition: transform .3s ease, background .25s !important; }
+        .card-lift:hover { transform: translateY(-5px); background: #111110 !important; }
+        .cat-icon { width:34px; height:34px; border-radius:50%; background:rgba(200,169,110,.07); border:1px solid rgba(200,169,110,.14); display:inline-flex; align-items:center; justify-content:center; font-size:.95rem; flex-shrink:0; }
+        .tag-cat { display:inline-block; background:rgba(200,169,110,.06); color:#c8a96e; border:1px solid rgba(200,169,110,.18); padding:.15rem .55rem; font-size:.58rem; letter-spacing:.15em; text-transform:uppercase; }
+        .stat-card { transition: transform .2s, border-color .2s; border:1px solid transparent !important; }
+        .stat-card:hover { transform:translateY(-3px); border-color:rgba(200,169,110,.2) !important; }
+        .menu-item-accent { border-left:2px solid rgba(200,169,110,.15); transition: border-color .25s; }
+        .menu-item-accent:hover { border-left-color:#c8a96e !important; }
+        @media (max-width:900px) {
+          .admin-layout { grid-template-columns:1fr !important; min-height:auto !important; }
+          .admin-sidebar { flex-direction:row !important; padding:.75rem 1rem !important; border-right:none !important; border-bottom:1px solid rgba(138,138,126,.1) !important; }
+          .stats-4 { grid-template-columns:repeat(2,1fr) !important; }
+          .footer-cols { grid-template-columns:1fr 1fr !important; }
+        }
+        @media (max-width:768px) {
+          .featured-grid { grid-template-columns:1fr 1fr !important; }
+          .menu-grid { grid-template-columns:1fr !important; }
+          .hero-deco { display:none !important; }
+          .hero-content { padding:4rem 1.5rem 3rem !important; }
+          .hero-title { font-size:clamp(2.4rem,9vw,3.8rem) !important; }
+          .section-pad { padding:4rem 1.5rem !important; }
+          .stats-strip { grid-template-columns:repeat(2,1fr) !important; }
+          .footer-cols { grid-template-columns:1fr !important; }
+          .checkout-wrap { padding:6rem 1.25rem 3rem !important; }
+          .checkout-grid { grid-template-columns:1fr !important; }
+          .cart-panel { width:100vw !important; max-width:100vw !important; }
+          .nav-links { gap:1.2rem !important; }
+        }
+        @media (max-width:480px) {
+          .featured-grid { grid-template-columns:1fr !important; }
+          .stats-4 { grid-template-columns:1fr 1fr !important; }
+          .stats-strip { grid-template-columns:1fr 1fr !important; }
+        }
       `}</style>
 
       <GrainBg />
@@ -225,7 +261,7 @@ export default function App() {
       {cartOpen && (
         <div style={{ position: "fixed", inset: 0, zIndex: 200 }}>
           <div onClick={() => setCartOpen(false)} style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,.7)" }} />
-          <div style={{ position: "absolute", top: 0, right: 0, width: 400, height: "100vh", background: "#1a1a16", borderLeft: "1px solid rgba(200,169,110,.15)", display: "flex", flexDirection: "column", animation: "slideIn .35s cubic-bezier(.25,.46,.45,.94)" }}>
+          <div style={{ position: "absolute", top: 0, right: 0, width: 400, height: "100vh", background: "#1a1a16", borderLeft: "1px solid rgba(200,169,110,.15)", display: "flex", flexDirection: "column", animation: "slideIn .35s cubic-bezier(.25,.46,.45,.94)" }} className="cart-panel">
             <div style={{ padding: "1.5rem 2rem", borderBottom: "1px solid rgba(138,138,126,.15)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
               <span className="serif" style={{ fontSize: "1.1rem", letterSpacing: ".05em" }}>Keranjang</span>
               <button onClick={() => setCartOpen(false)} style={{ background: "none", border: "none", color: "#8a8a7e", fontSize: "1.5rem", lineHeight: 1 }}>×</button>
@@ -276,15 +312,25 @@ export default function App() {
       {page === PAGES.MENU && (
         <div style={{ paddingTop: "4.5rem" }}>
           {/* Hero */}
-          <div style={{ minHeight: "75vh", display: "flex", alignItems: "flex-end", padding: "5rem 3rem 4rem", position: "relative", overflow: "hidden" }}>
-            <div style={{ position: "absolute", inset: 0, background: "radial-gradient(ellipse at 65% 50%, rgba(200,169,110,.05) 0%, transparent 60%)" }} />
-            <div style={{ position: "absolute", right: "6%", top: "50%", transform: "translateY(-50%)", fontFamily: "'Cormorant Garamond',serif", fontSize: "clamp(8rem,18vw,16rem)", color: "rgba(200,169,110,.04)", lineHeight: 1, userSelect: "none", pointerEvents: "none" }}>☕</div>
+          <div style={{ minHeight: "75vh", display: "flex", alignItems: "flex-end", padding: "5rem 3rem 4rem", position: "relative", overflow: "hidden" }} className="hero-content">
+            <div style={{ position: "absolute", inset: 0, background: "radial-gradient(ellipse at 65% 50%, rgba(200,169,110,.07) 0%, transparent 60%)" }} />
+            {/* Decorative rings */}
+            <div className="hero-deco" style={{ position: "absolute", right: "5%", top: "50%", transform: "translateY(-50%)", display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "none", userSelect: "none" }}>
+              <div style={{ width: 360, height: 360, border: "1px solid rgba(200,169,110,.06)", borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", position: "relative" }}>
+                <div style={{ width: 270, height: 270, border: "1px solid rgba(200,169,110,.1)", borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  <div style={{ width: 185, height: 185, border: "1px solid rgba(200,169,110,.16)", borderRadius: "50%", background: "radial-gradient(circle, rgba(200,169,110,.04) 0%, transparent 70%)", display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: ".5rem" }}>
+                    <span style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: "3.5rem", color: "rgba(200,169,110,.35)", lineHeight: 1 }}>☕</span>
+                    <span style={{ fontSize: ".5rem", letterSpacing: ".35em", textTransform: "uppercase", color: "rgba(200,169,110,.25)" }}>Noir Coffee</span>
+                  </div>
+                </div>
+              </div>
+            </div>
             <div className="fade-in">
               <div style={{ fontSize: ".65rem", letterSpacing: ".4em", textTransform: "uppercase", color: "#c8a96e", marginBottom: "1.5rem", display: "flex", alignItems: "center", gap: "1rem" }}>
                 <span style={{ display: "inline-block", width: 40, height: 1, background: "#c8a96e" }} />
                 Kedai Kopi Bandung Sejak 2018
               </div>
-              <h1 className="serif" style={{ fontSize: "clamp(3rem,8vw,6.5rem)", fontWeight: 300, lineHeight: .92, letterSpacing: "-.02em", marginBottom: "2rem" }}>
+              <h1 className="serif hero-title" style={{ fontSize: "clamp(3rem,8vw,6.5rem)", fontWeight: 300, lineHeight: .92, letterSpacing: "-.02em", marginBottom: "2rem" }}>
                 Dituang<br />dengan <em style={{ color: "#c8a96e" }}>jiwa,</em><br />diminum<br />dengan rasa.
               </h1>
               <p style={{ maxWidth: 380, color: "#8a8a7e", fontSize: ".88rem", lineHeight: 1.8, marginBottom: "2.5rem" }}>
@@ -297,6 +343,21 @@ export default function App() {
             </div>
           </div>
 
+          {/* Stats Strip */}
+          <div className="stats-strip" style={{ borderTop: "1px solid rgba(138,138,126,.1)", borderBottom: "1px solid rgba(138,138,126,.1)", display: "grid", gridTemplateColumns: "repeat(4,1fr)" }}>
+            {[
+              { value: "2018", label: "Berdiri Sejak" },
+              { value: "40+", label: "Pilihan Menu" },
+              { value: "08–22", label: "Jam Buka" },
+              { value: "★ 4.9", label: "Rating Pelanggan" },
+            ].map((s, i) => (
+              <div key={s.label} style={{ padding: "1.5rem 2rem", textAlign: "center", borderRight: i < 3 ? "1px solid rgba(138,138,126,.1)" : "none" }}>
+                <div className="serif" style={{ fontSize: "1.8rem", color: "#c8a96e", lineHeight: 1 }}>{s.value}</div>
+                <div style={{ fontSize: ".6rem", letterSpacing: ".2em", textTransform: "uppercase", color: "#8a8a7e", marginTop: ".35rem" }}>{s.label}</div>
+              </div>
+            ))}
+          </div>
+
           {/* Featured */}
           <div style={{ padding: "0 3rem 0" }}>
             <div style={{ display: "flex", alignItems: "center", gap: "1.5rem", marginBottom: "2rem" }}>
@@ -304,11 +365,12 @@ export default function App() {
               <div style={{ flex: 1, height: 1, background: "rgba(138,138,126,.2)" }} />
             </div>
           </div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(260px,1fr))", gap: 1, background: "rgba(138,138,126,.1)", margin: "0 0 0" }}>
+          <div className="featured-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(260px,1fr))", gap: 1, background: "rgba(138,138,126,.1)", margin: "0 0 0" }}>
             {featured.map((item, i) => (
-              <div key={item.id} className="card-hover" style={{ background: "#0a0a08", padding: "2.5rem 2rem", position: "relative", overflow: "hidden" }}>
-                <div style={{ position: "absolute", bottom: "1rem", right: "1.5rem", fontFamily: "'Cormorant Garamond',serif", fontSize: "4rem", color: "rgba(200,169,110,.05)", lineHeight: 1 }}>{String(i + 1).padStart(2, "0")}</div>
-                <div style={{ fontSize: ".65rem", letterSpacing: ".25em", textTransform: "uppercase", color: "#c8a96e", marginBottom: ".75rem" }}>
+              <div key={item.id} className="card-hover card-lift" style={{ background: "#0a0a08", padding: "2.5rem 2rem", position: "relative", overflow: "hidden", borderTop: "2px solid rgba(200,169,110,.18)" }}>
+                <div style={{ position: "absolute", bottom: "1rem", right: "1.5rem", fontFamily: "'Cormorant Garamond',serif", fontSize: "4rem", color: "rgba(200,169,110,.05)", lineHeight: 1, pointerEvents: "none", userSelect: "none" }}>{String(i + 1).padStart(2, "0")}</div>
+                <div style={{ display: "flex", alignItems: "center", gap: ".6rem", fontSize: ".65rem", letterSpacing: ".25em", textTransform: "uppercase", color: "#c8a96e", marginBottom: ".75rem" }}>
+                  <span className="cat-icon">{getCatIcon(item.category_slug)}</span>
                   {item.category_name}
                 </div>
                 <h3 className="serif" style={{ fontSize: "1.6rem", marginBottom: ".75rem", lineHeight: 1.1 }}>{item.name}</h3>
@@ -344,15 +406,18 @@ export default function App() {
             {loadingMenu ? (
               <div style={{ textAlign: "center", padding: "4rem 0", color: "#4a4a42", fontSize: ".85rem", letterSpacing: ".15em" }}>Memuat menu...</div>
             ) : (
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(300px,1fr))", gap: 1, background: "rgba(138,138,126,.08)" }}>
+              <div className="menu-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(300px,1fr))", gap: 1, background: "rgba(138,138,126,.08)" }}>
                 {filteredMenu.map(item => (
-                  <div key={item.id} className="card-hover" style={{ background: "#0a0a08", padding: "1.75rem 2rem" }}>
+                  <div key={item.id} className="card-hover card-lift menu-item-accent" style={{ background: "#0a0a08", padding: "1.75rem 2rem" }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: ".6rem" }}>
-                      <h4 className="serif" style={{ fontSize: "1.15rem", flex: 1, paddingRight: "1rem", lineHeight: 1.2 }}>{item.name}</h4>
+                      <div style={{ display: "flex", alignItems: "center", gap: ".6rem", flex: 1, paddingRight: "1rem" }}>
+                        <span className="cat-icon" style={{ fontSize: ".85rem", width: 30, height: 30 }}>{getCatIcon(item.category_slug)}</span>
+                        <h4 className="serif" style={{ fontSize: "1.15rem", lineHeight: 1.2 }}>{item.name}</h4>
+                      </div>
                       <span style={{ color: "#c8a96e", fontSize: ".85rem", whiteSpace: "nowrap" }}>{rp(item.price)}</span>
                     </div>
-                    <p style={{ color: "#8a8a7e", fontSize: ".78rem", lineHeight: 1.7, marginBottom: "1.25rem" }}>{item.description}</p>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <p style={{ color: "#8a8a7e", fontSize: ".78rem", lineHeight: 1.7, marginBottom: "1.25rem", paddingLeft: "2.4rem" }}>{item.description}</p>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingLeft: "2.4rem" }}>
                       <span style={{ fontSize: ".6rem", letterSpacing: ".15em", textTransform: "uppercase", color: "#4a4a42" }}>
                         {item.is_featured === 1 && "★ Featured · "}{item.category_name}
                       </span>
@@ -367,21 +432,46 @@ export default function App() {
               </div>)}          </div>
 
           {/* Footer */}
-          <div style={{ borderTop: "1px solid rgba(138,138,126,.1)", padding: "3rem", textAlign: "center", color: "#4a4a42", fontSize: ".75rem", letterSpacing: ".15em" }}>
-            <div className="serif" style={{ fontSize: "2rem", color: "#c8a96e", display: "block", marginBottom: ".5rem" }}>Noir Coffee</div>
-            Jl. Braga No. 88, Bandung · Buka 08.00 — 22.00
-          </div>
+          <footer style={{ borderTop: "1px solid rgba(138,138,126,.1)", background: "#050503" }}>
+            <div className="footer-cols" style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr", gap: "2.5rem", maxWidth: 1100, margin: "0 auto", padding: "3rem 3rem 2rem" }}>
+              <div>
+                <div className="serif" style={{ fontSize: "2rem", color: "#c8a96e", marginBottom: ".6rem" }}>Noir Coffee</div>
+                <p style={{ fontSize: ".82rem", color: "#8a8a7e", lineHeight: 1.8, maxWidth: 300 }}>Setiap cangkir adalah ritual. Biji pilihan dari berbagai penjuru nusantara, diseduh dengan teknik yang telah kami sempurnakan bertahun-tahun.</p>
+              </div>
+              <div>
+                <div style={{ fontSize: ".6rem", letterSpacing: ".25em", textTransform: "uppercase", color: "#c8a96e", marginBottom: "1rem" }}>Lokasi</div>
+                <div style={{ fontSize: ".82rem", color: "#8a8a7e", lineHeight: 1.9 }}>
+                  <div>Jl. Braga No. 88</div>
+                  <div>Bandung, Jawa Barat</div>
+                  <div style={{ marginTop: ".5rem", color: "#f0ede6" }}>+62 811 2345 6789</div>
+                </div>
+              </div>
+              <div>
+                <div style={{ fontSize: ".6rem", letterSpacing: ".25em", textTransform: "uppercase", color: "#c8a96e", marginBottom: "1rem" }}>Jam Buka</div>
+                <div style={{ fontSize: ".82rem", color: "#8a8a7e", lineHeight: 1.9 }}>
+                  <div>Senin – Jumat</div>
+                  <div style={{ color: "#f0ede6" }}>08.00 – 22.00 WIB</div>
+                  <div style={{ marginTop: ".5rem" }}>Sabtu – Minggu</div>
+                  <div style={{ color: "#f0ede6" }}>07.00 – 23.00 WIB</div>
+                </div>
+              </div>
+            </div>
+            <div style={{ borderTop: "1px solid rgba(138,138,126,.08)", padding: "1.25rem 3rem", display: "flex", justifyContent: "space-between", alignItems: "center", maxWidth: 1100, margin: "0 auto" }}>
+              <span style={{ color: "#4a4a42", fontSize: ".7rem", letterSpacing: ".12em" }}>© 2025 Noir Coffee. All rights reserved.</span>
+              <span style={{ color: "#4a4a42", fontSize: ".7rem", letterSpacing: ".12em" }}>Bandung, Indonesia</span>
+            </div>
+          </footer>
         </div>
       )}
 
       {/* ======================== CHECKOUT PAGE ======================== */}
       {page === PAGES.CHECKOUT && (
-        <div style={{ maxWidth: 600, margin: "0 auto", padding: "7rem 2rem 4rem" }} className="fade-in">
+        <div style={{ maxWidth: 600, margin: "0 auto", padding: "7rem 2rem 4rem" }} className="fade-in checkout-wrap">
           <button onClick={() => setPage(PAGES.MENU)} style={{ background: "none", border: "none", color: "#8a8a7e", fontSize: ".7rem", letterSpacing: ".2em", textTransform: "uppercase", marginBottom: "2rem", display: "flex", alignItems: "center", gap: ".5rem" }}>← Kembali</button>
           <div style={{ fontSize: ".65rem", letterSpacing: ".35em", textTransform: "uppercase", color: "#c8a96e", marginBottom: ".75rem" }}>Konfirmasi Pesanan</div>
           <h1 className="serif" style={{ fontSize: "2.2rem", marginBottom: "2.5rem" }}>Detail Pemesanan</h1>
 
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem" }} className="checkout-grid">
             <div style={{ gridColumn: "span 2" }}>
               <label style={{ display: "block", fontSize: ".65rem", letterSpacing: ".2em", textTransform: "uppercase", color: "#8a8a7e", marginBottom: ".4rem" }}>Nama Pemesan *</label>
               <input className="input-noir" placeholder="Nama kamu" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} />
@@ -545,14 +635,14 @@ export default function App() {
 
       {/* ======================== ADMIN PAGE ======================== */}
       {page === PAGES.ADMIN && (
-        <div style={{ paddingTop: "4.5rem", display: "grid", gridTemplateColumns: "200px 1fr", minHeight: "100vh" }} className="fade-in">
+        <div className="admin-layout fade-in" style={{ paddingTop: "4.5rem", display: "grid", gridTemplateColumns: "200px 1fr", minHeight: "100vh" }}>
           {/* Sidebar */}
-          <div style={{ background: "#1a1a16", borderRight: "1px solid rgba(138,138,126,.1)", padding: "2rem 0" }}>
+          <div className="admin-sidebar" style={{ background: "#1a1a16", borderRight: "1px solid rgba(138,138,126,.1)", padding: "2rem 0" }}>
             <div style={{ fontSize: ".6rem", letterSpacing: ".3em", textTransform: "uppercase", color: "#4a4a42", padding: "0 1.5rem", marginBottom: "1rem" }}>Manajemen</div>
-            {[{ icon: "⬡", label: "Dashboard" }, { icon: "◈", label: "Pesanan" }, { icon: "◎", label: "Produk" }].map(({ icon, label }) => (
-              <div key={label} style={{ padding: ".65rem 1.5rem", display: "flex", gap: ".75rem", alignItems: "center", color: "#8a8a7e", fontSize: ".8rem", cursor: "default", borderLeft: "2px solid transparent" }}>
+            {[{ icon: "⬡", label: "Dashboard", view: "dashboard" }, { icon: "◈", label: "Pesanan", view: "pesanan" }, { icon: "◎", label: "Produk", view: "produk" }].map(({ icon, label, view }) => (
+              <button key={label} onClick={() => setAdminView(view)} style={{ background: "none", border: "none", borderLeft: `2px solid ${adminView === view ? "#c8a96e" : "transparent"}`, padding: ".65rem 1.5rem", display: "flex", gap: ".75rem", alignItems: "center", color: adminView === view ? "#c8a96e" : "#8a8a7e", fontSize: ".8rem", width: "100%", textAlign: "left", cursor: "pointer", transition: "color .2s, border-color .2s" }}>
                 {icon} {label}
-              </div>
+              </button>
             ))}
             <div style={{ fontSize: ".6rem", letterSpacing: ".3em", textTransform: "uppercase", color: "#4a4a42", padding: "1.5rem 1.5rem .75rem" }}>Navigasi</div>
             <button onClick={() => setPage(PAGES.MENU)} style={{ background: "none", border: "none", padding: ".65rem 1.5rem", display: "flex", gap: ".75rem", alignItems: "center", color: "#8a8a7e", fontSize: ".8rem", width: "100%", textAlign: "left" }}>← Lihat Toko</button>
@@ -564,24 +654,27 @@ export default function App() {
             <h1 className="serif" style={{ fontSize: "1.8rem", marginBottom: "2.5rem" }}>Selamat datang, <em>Barista.</em></h1>
 
             {/* Stats */}
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 1, background: "rgba(138,138,126,.08)", marginBottom: "3rem" }}>
+            {(adminView === "dashboard") && <div className="stats-4" style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 1, background: "rgba(138,138,126,.08)", marginBottom: "3rem" }}>
               {[
-                { label: "Pesanan Hari Ini", value: stats.total_orders, sub: "Total order masuk" },
-                { label: "Pendapatan", value: "Rp " + Number(stats.revenue).toLocaleString("id-ID"), sub: "Order selesai (hari ini)" },
-                { label: "Pesanan Aktif", value: stats.active_orders, sub: "Perlu diproses" },
-                { label: "Total Produk", value: stats.total_products, sub: "Produk aktif" },
+                { label: "Pesanan Hari Ini", value: stats.total_orders, sub: "Total order masuk", icon: "📋" },
+                { label: "Pendapatan", value: "Rp " + Number(stats.revenue).toLocaleString("id-ID"), sub: "Order selesai (hari ini)", icon: "💰" },
+                { label: "Pesanan Aktif", value: stats.active_orders, sub: "Perlu diproses", icon: "⏳" },
+                { label: "Total Produk", value: stats.total_products, sub: "Produk aktif", icon: "☕" },
               ].map(s => (
-                <div key={s.label} style={{ background: "#0a0a08", padding: "2rem 1.5rem" }}>
-                  <div style={{ fontSize: ".65rem", letterSpacing: ".25em", textTransform: "uppercase", color: "#8a8a7e", marginBottom: ".75rem" }}>{s.label}</div>
+                <div key={s.label} className="stat-card" style={{ background: "#0a0a08", padding: "2rem 1.5rem" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: ".75rem" }}>
+                    <div style={{ fontSize: ".65rem", letterSpacing: ".25em", textTransform: "uppercase", color: "#8a8a7e" }}>{s.label}</div>
+                    <span style={{ fontSize: "1.1rem", opacity: .4 }}>{s.icon}</span>
+                  </div>
                   <div className="serif" style={{ fontSize: "2rem", color: "#c8a96e", lineHeight: 1 }}>{s.value}</div>
                   <div style={{ fontSize: ".75rem", color: "#4a4a42", marginTop: ".4rem" }}>{s.sub}</div>
                 </div>
               ))}
-            </div>
+            </div>}
 
             {/* Orders Table */}
-            <div style={{ fontSize: ".65rem", letterSpacing: ".3em", textTransform: "uppercase", color: "#c8a96e", marginBottom: "1.25rem" }}>Daftar Pesanan</div>
-            <div style={{ overflowX: "auto" }}>
+            {(adminView === "dashboard" || adminView === "pesanan") && <div style={{ fontSize: ".65rem", letterSpacing: ".3em", textTransform: "uppercase", color: "#c8a96e", marginBottom: "1.25rem" }}>Daftar Pesanan</div>}
+            {(adminView === "dashboard" || adminView === "pesanan") && <div style={{ overflowX: "auto" }}>
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: ".8rem" }}>
                 <thead>
                   <tr>
@@ -617,10 +710,10 @@ export default function App() {
                   ))}
                 </tbody>
               </table>
-            </div>
+            </div>}
 
             {/* Products list */}
-            <div style={{ marginTop: "3rem" }}>
+            {(adminView === "dashboard" || adminView === "produk") && <div style={{ marginTop: adminView === "produk" ? "0" : "3rem" }}>
               <div style={{ fontSize: ".65rem", letterSpacing: ".3em", textTransform: "uppercase", color: "#c8a96e", marginBottom: "1.25rem" }}>Produk</div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(240px,1fr))", gap: 1, background: "rgba(138,138,126,.08)" }}>
                 {menu.map(p => (
@@ -635,7 +728,7 @@ export default function App() {
                   </div>
                 ))}
               </div>
-            </div>
+            </div>}
           </div>
         </div>
       )}
