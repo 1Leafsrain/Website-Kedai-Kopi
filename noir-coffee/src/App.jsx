@@ -17,7 +17,10 @@ const GrainBg = () => (
 );
 
 // --- Pages ---
-const PAGES = { MENU: "menu", CART: "cart", CHECKOUT: "checkout", CONFIRM: "confirm", TRACK: "track", ADMIN: "admin" };
+const PAGES = { MENU: "menu", CART: "cart", CHECKOUT: "checkout", CONFIRM: "confirm", TRACK: "track", ADMIN: "admin", HISTORY: "history" };
+
+const ROLE_LABEL = { guest: "Tamu", user: "Pengguna", admin: "Admin" };
+const ROLE_COLOR = { guest: "#8a8a7e", user: "#c8a96e", admin: "#60dd60" };
 
 export default function App() {
   const [page, setPage] = useState(PAGES.MENU);
@@ -46,6 +49,71 @@ export default function App() {
   const [tableFormOpen, setTableFormOpen] = useState(false);
   const [tableFormError, setTableFormError] = useState("");
 
+  // ─── Auth State ───────────────────────────────────────────────────────────
+  const [currentUser, setCurrentUser] = useState(null);
+  const [authToken, setAuthToken] = useState(() => localStorage.getItem("nc_token") || null);
+  const [authModal, setAuthModal] = useState(null); // null | "login" | "register"
+  const [authTab, setAuthTab] = useState("login");
+  const [authForm, setAuthForm] = useState({ name: "", email: "", password: "" });
+  const [authError, setAuthError] = useState("");
+  const [authLoading, setAuthLoading] = useState(false);
+
+  // ─── Users (admin) ────────────────────────────────────────────────────────
+  const [userList, setUserList] = useState([]);
+  const [userFormOpen, setUserFormOpen] = useState(false);
+  const [editingUser, setEditingUser] = useState(null);
+  const [userForm, setUserForm] = useState({ name: "", email: "", password: "", role: "user" });
+  const [userFormError, setUserFormError] = useState("");
+
+  // ─── History (user) ──────────────────────────────────────────────────────
+  const [myOrders, setMyOrders] = useState([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyExpandedId, setHistoryExpandedId] = useState(null);
+
+  // ─── Auth helpers ────────────────────────────────────────────────────────
+  const authHeaders = (token) => ({
+    "Content-Type": "application/json",
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  });
+
+  const saveAuth = (user, token) => {
+    localStorage.setItem("nc_token", token);
+    localStorage.setItem("nc_user", JSON.stringify(user));
+    setAuthToken(token);
+    setCurrentUser(user);
+  };
+
+  const logout = () => {
+    localStorage.removeItem("nc_token");
+    localStorage.removeItem("nc_user");
+    setAuthToken(null);
+    setCurrentUser(null);
+    setOrders([]);
+    setStats({ total_orders: 0, revenue: 0, active_orders: 0, total_products: 0, total_tables: 0, occupied_tables: 0 });
+    setPage(PAGES.MENU);
+    showToast("Berhasil keluar");
+  };
+
+  const handleAuthSubmit = async () => {
+    setAuthError("");
+    setAuthLoading(true);
+    try {
+      const endpoint = authTab === "login" ? "/api/auth/login" : "/api/auth/register";
+      const body = authTab === "login"
+        ? { email: authForm.email, password: authForm.password }
+        : { name: authForm.name, email: authForm.email, password: authForm.password };
+      const res = await fetch(endpoint, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      const data = await res.json();
+      if (!res.ok) { setAuthError(data.error || "Gagal masuk"); return; }
+      saveAuth(data.user, data.token);
+      setAuthModal(null);
+      setAuthForm({ name: "", email: "", password: "" });
+      showToast(`Selamat datang, ${data.user.name}!`);
+      if (data.user.role === "admin") setPage(PAGES.ADMIN);
+    } catch { setAuthError("Terjadi kesalahan, coba lagi"); }
+    finally { setAuthLoading(false); }
+  };
+
   const fetchCategories = async () => {
     try {
       const res = await fetch("/api/categories");
@@ -72,33 +140,73 @@ export default function App() {
     } catch { setTables([]); }
   };
 
-  const fetchOrders = async () => {
+  const fetchOrders = async (token) => {
+    const tk = token !== undefined ? token : authToken;
+    if (!tk) return;
     try {
-      const res = await fetch("/api/orders");
+      const res = await fetch("/api/orders", { headers: authHeaders(tk) });
+      if (res.status === 401 || res.status === 403) return;
       const data = await res.json();
       setOrders(Array.isArray(data) ? data : []);
     } catch { setOrders([]); }
   };
 
-  const fetchStats = async () => {
+  const fetchStats = async (token) => {
+    const tk = token !== undefined ? token : authToken;
+    if (!tk) return;
     try {
-      const res = await fetch("/api/stats");
+      const res = await fetch("/api/stats", { headers: authHeaders(tk) });
+      if (res.status === 401 || res.status === 403) return;
       const data = await res.json();
       setStats(data);
     } catch { /* keep defaults */ }
+  };
+
+  const fetchUserList = async (token) => {
+    const tk = token !== undefined ? token : authToken;
+    if (!tk) return;
+    try {
+      const res = await fetch("/api/users", { headers: authHeaders(tk) });
+      if (!res.ok) return;
+      const data = await res.json();
+      setUserList(Array.isArray(data) ? data : []);
+    } catch { setUserList([]); }
+  };
+
+  const fetchMyOrders = async (token) => {
+    const tk = token !== undefined ? token : authToken;
+    if (!tk) return;
+    setHistoryLoading(true);
+    try {
+      const res = await fetch("/api/orders/my", { headers: authHeaders(tk) });
+      const data = await res.json();
+      setMyOrders(Array.isArray(data) ? data : []);
+    } catch { setMyOrders([]); }
+    finally { setHistoryLoading(false); }
   };
 
   useEffect(() => {
     setMounted(true);
     fetchCategories();
     fetchMenu();
-    fetchOrders();
-    fetchStats();
     fetchTables();
+    // Restore auth from localStorage
+    const tk = localStorage.getItem("nc_token");
+    const uc = localStorage.getItem("nc_user");
+    if (tk && uc) {
+      try {
+        const user = JSON.parse(uc);
+        setCurrentUser(user);
+        setAuthToken(tk);
+        fetchOrders(tk);
+        fetchStats(tk);
+      } catch { logout(); }
+    }
   }, []);
 
   useEffect(() => {
-    if (page === "admin") { fetchOrders(); fetchStats(); fetchTables(); setAdminView("dashboard"); }
+    if (page === "admin") { fetchOrders(); fetchStats(); fetchTables(); fetchUserList(); setAdminView("dashboard"); }
+    if (page === "history" && currentUser) { fetchMyOrders(); setHistoryExpandedId(null); }
   }, [page]);
 
   // Poll tables every 10s to keep status fresh
@@ -138,7 +246,7 @@ export default function App() {
     try {
       await fetch(`/api/orders/${orderNumber}/status`, {
         method: "PATCH",
-        headers: { "Content-Type": "application/json" },
+        headers: authHeaders(authToken),
         body: JSON.stringify({ status }),
       });
       setOrders(prev => prev.map(o => o.order_number === orderNumber ? { ...o, status } : o));
@@ -177,7 +285,7 @@ export default function App() {
       const method = editingTable ? "PUT" : "POST";
       const url = editingTable ? `/api/tables/${editingTable.id}` : "/api/tables";
       const res = await fetch(url, {
-        method, headers: { "Content-Type": "application/json" },
+        method, headers: authHeaders(authToken),
         body: JSON.stringify({ ...tableForm, capacity: Number(tableForm.capacity) }),
       });
       const data = await res.json();
@@ -191,7 +299,7 @@ export default function App() {
   const deleteTable = async (id) => {
     if (!window.confirm("Hapus meja ini?")) return;
     try {
-      const res = await fetch(`/api/tables/${id}`, { method: "DELETE" });
+      const res = await fetch(`/api/tables/${id}`, { method: "DELETE", headers: authHeaders(authToken) });
       const data = await res.json();
       if (!res.ok) return showToast(data.error || "Gagal menghapus meja");
       fetchTables();
@@ -205,7 +313,7 @@ export default function App() {
       if (!tbl) return;
       await fetch(`/api/tables/${tbl.id}`, {
         method: "PUT",
-        headers: { "Content-Type": "application/json" },
+        headers: authHeaders(authToken),
         body: JSON.stringify({ table_number: tbl.table_number, capacity: tbl.capacity, location: tbl.location, status: "available" }),
       });
       fetchTables();
@@ -228,12 +336,11 @@ export default function App() {
       };
       const res = await fetch("/api/orders", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: authHeaders(authToken),
         body: JSON.stringify(body),
       });
       const data = await res.json();
       if (!res.ok) {
-        // Refresh tables if table was occupied by another customer
         if (res.status === 409) { fetchTables(); setForm(f => ({ ...f, table: "" })); }
         throw new Error(data.error || "Gagal membuat pesanan");
       }
@@ -244,6 +351,47 @@ export default function App() {
       fetchTables();
       setPage(PAGES.CONFIRM);
     } catch (err) { showToast(err.message); }
+  };
+
+  // ─── User CRUD (admin) ──────────────────────────────────────────────────
+  const openAddUser = () => {
+    setEditingUser(null);
+    setUserForm({ name: "", email: "", password: "", role: "user" });
+    setUserFormError("");
+    setUserFormOpen(true);
+  };
+  const openEditUser = (u) => {
+    setEditingUser(u);
+    setUserForm({ name: u.name, email: u.email, password: "", role: u.role });
+    setUserFormError("");
+    setUserFormOpen(true);
+  };
+  const saveUser = async () => {
+    if (!userForm.name.trim() || !userForm.email.trim()) return setUserFormError("Nama dan email wajib diisi");
+    if (!editingUser && userForm.password.length < 6) return setUserFormError("Password minimal 6 karakter");
+    setUserFormError("");
+    try {
+      const method = editingUser ? "PUT" : "POST";
+      const url = editingUser ? `/api/users/${editingUser.id}` : "/api/users";
+      const body = { ...userForm };
+      if (editingUser && !body.password) delete body.password;
+      const res = await fetch(url, { method, headers: authHeaders(authToken), body: JSON.stringify(body) });
+      const data = await res.json();
+      if (!res.ok) return setUserFormError(data.error || "Gagal menyimpan");
+      setUserFormOpen(false);
+      fetchUserList();
+      showToast(editingUser ? "Pengguna diperbarui" : "Pengguna ditambahkan");
+    } catch { setUserFormError("Gagal menyimpan"); }
+  };
+  const deleteUser = async (id) => {
+    if (!window.confirm("Hapus pengguna ini?")) return;
+    try {
+      const res = await fetch(`/api/users/${id}`, { method: "DELETE", headers: authHeaders(authToken) });
+      const data = await res.json();
+      if (!res.ok) return showToast(data.error || "Gagal menghapus");
+      fetchUserList();
+      showToast("Pengguna dihapus");
+    } catch { showToast("Gagal menghapus pengguna"); }
   };
 
   const filteredMenu = activeCat === "all" ? menu : menu.filter(m => m.category_slug === activeCat);
@@ -321,17 +469,88 @@ export default function App() {
         </div>
       )}
 
+      {/* Auth Modal */}
+      {authModal && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 300 }}>
+          <div onClick={() => setAuthModal(null)} style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,.8)" }} />
+          <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%,-50%)", background: "#1a1a16", border: "1px solid rgba(200,169,110,.2)", padding: "2.5rem", width: "min(420px,92vw)" }}>
+            {/* Tabs */}
+            <div style={{ display: "flex", borderBottom: "1px solid rgba(138,138,126,.15)", marginBottom: "2rem" }}>
+              {[["login", "Masuk"], ["register", "Daftar"]].map(([tab, label]) => (
+                <button key={tab} onClick={() => { setAuthTab(tab); setAuthError(""); }} style={{ flex: 1, background: "none", border: "none", borderBottom: `2px solid ${authTab === tab ? "#c8a96e" : "transparent"}`, color: authTab === tab ? "#c8a96e" : "#8a8a7e", padding: ".7rem", fontSize: ".75rem", letterSpacing: ".2em", textTransform: "uppercase", marginBottom: -1, cursor: "pointer", transition: "all .2s" }}>
+                  {label}
+                </button>
+              ))}
+            </div>
+            <h2 className="serif" style={{ fontSize: "1.6rem", marginBottom: "1.5rem" }}>{authTab === "login" ? "Masuk ke Akun" : "Buat Akun Baru"}</h2>
+            {authError && (
+              <div style={{ marginBottom: "1rem", padding: ".7rem 1rem", borderLeft: "2px solid #c05050", background: "rgba(139,46,46,.1)", fontSize: ".8rem", color: "#d06060" }}>{authError}</div>
+            )}
+            <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
+              {authTab === "register" && (
+                <div>
+                  <label style={{ display: "block", fontSize: ".6rem", letterSpacing: ".2em", textTransform: "uppercase", color: "#8a8a7e", marginBottom: ".4rem" }}>Nama *</label>
+                  <input className="input-noir" placeholder="Nama lengkap" value={authForm.name} onChange={e => setAuthForm(f => ({ ...f, name: e.target.value }))} />
+                </div>
+              )}
+              <div>
+                <label style={{ display: "block", fontSize: ".6rem", letterSpacing: ".2em", textTransform: "uppercase", color: "#8a8a7e", marginBottom: ".4rem" }}>Email *</label>
+                <input className="input-noir" type="email" placeholder="email@kamu.id" value={authForm.email} onChange={e => setAuthForm(f => ({ ...f, email: e.target.value }))} onKeyDown={e => e.key === "Enter" && handleAuthSubmit()} />
+              </div>
+              <div>
+                <label style={{ display: "block", fontSize: ".6rem", letterSpacing: ".2em", textTransform: "uppercase", color: "#8a8a7e", marginBottom: ".4rem" }}>Password *</label>
+                <input className="input-noir" type="password" placeholder="Min. 6 karakter" value={authForm.password} onChange={e => setAuthForm(f => ({ ...f, password: e.target.value }))} onKeyDown={e => e.key === "Enter" && handleAuthSubmit()} />
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: ".75rem", marginTop: "2rem" }}>
+              <button className="btn-outline" style={{ flex: 1 }} onClick={() => setAuthModal(null)}>Batal</button>
+              <button className="btn-gold" style={{ flex: 1, opacity: authLoading ? .6 : 1 }} onClick={handleAuthSubmit} disabled={authLoading}>
+                {authLoading ? "Memproses..." : authTab === "login" ? "Masuk" : "Daftar"}
+              </button>
+            </div>
+            {authTab === "login" && (
+              <p style={{ marginTop: "1.25rem", fontSize: ".75rem", color: "#8a8a7e", textAlign: "center" }}>
+                Belum punya akun?{" "}
+                <button onClick={() => setAuthTab("register")} style={{ background: "none", border: "none", color: "#c8a96e", cursor: "pointer", fontSize: ".75rem", textDecoration: "underline" }}>Daftar sekarang</button>
+              </p>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Navbar */}
       <nav style={{ position: "fixed", top: 0, left: 0, right: 0, zIndex: 100, padding: "1.1rem 2rem", display: "flex", alignItems: "center", justifyContent: "space-between", borderBottom: "1px solid rgba(200,169,110,.12)", background: "rgba(10,10,8,.92)", backdropFilter: "blur(12px)" }}>
         <button onClick={() => setPage(PAGES.MENU)} style={{ background: "none", border: "none", color: "#f0ede6", fontSize: "1.2rem", letterSpacing: ".25em", textTransform: "uppercase", fontFamily: "'Cormorant Garamond',serif", cursor: "pointer" }}>
           Noir <span style={{ color: "#c8a96e" }}>●</span> Coffee
         </button>
-        <div style={{ display: "flex", gap: "2rem", alignItems: "center" }}>
-          {[{ label: "Menu", p: PAGES.MENU }, { label: "Lacak", p: PAGES.TRACK }, { label: "Admin", p: PAGES.ADMIN }].map(({ label, p }) => (
-            <button key={p} onClick={() => setPage(p)} style={{ background: "none", border: "none", color: page === p ? "#c8a96e" : "#8a8a7e", fontSize: ".7rem", letterSpacing: ".2em", textTransform: "uppercase", transition: "color .2s" }}>
-              {label}
-            </button>
+        <div style={{ display: "flex", gap: "2rem", alignItems: "center" }} className="nav-links">
+          {[{ label: "Menu", p: PAGES.MENU }, { label: "Lacak", p: PAGES.TRACK }].map(({ label, p }) => (
+            <button key={p} onClick={() => setPage(p)} style={{ background: "none", border: "none", color: page === p ? "#c8a96e" : "#8a8a7e", fontSize: ".7rem", letterSpacing: ".2em", textTransform: "uppercase", transition: "color .2s" }}>{label}</button>
           ))}
+          {currentUser && (
+            <button onClick={() => setPage(PAGES.HISTORY)} style={{ background: "none", border: "none", color: page === PAGES.HISTORY ? "#c8a96e" : "#8a8a7e", fontSize: ".7rem", letterSpacing: ".2em", textTransform: "uppercase", transition: "color .2s" }}>Riwayat</button>
+          )}
+          {currentUser?.role === "admin" && (
+            <button onClick={() => setPage(PAGES.ADMIN)} style={{ background: "none", border: "none", color: page === PAGES.ADMIN ? "#c8a96e" : "#8a8a7e", fontSize: ".7rem", letterSpacing: ".2em", textTransform: "uppercase", transition: "color .2s" }}>Admin</button>
+          )}
+          {/* Auth */}
+          {!currentUser ? (
+            <button onClick={() => { setAuthTab("login"); setAuthModal("login"); setAuthError(""); setAuthForm({ name: "", email: "", password: "" }); }}
+              style={{ background: "none", border: "1px solid rgba(200,169,110,.35)", color: "#c8a96e", padding: ".45rem 1rem", fontSize: ".7rem", letterSpacing: ".15em", textTransform: "uppercase" }}>
+              Masuk
+            </button>
+          ) : (
+            <div style={{ display: "flex", alignItems: "center", gap: ".75rem" }}>
+              <span style={{ fontSize: ".65rem", letterSpacing: ".1em", color: ROLE_COLOR[currentUser.role] || "#c8a96e", border: `1px solid ${ROLE_COLOR[currentUser.role] || "#c8a96e"}50`, padding: ".2rem .5rem", textTransform: "uppercase" }}>
+                {ROLE_LABEL[currentUser.role] || currentUser.role}
+              </span>
+              <span style={{ fontSize: ".8rem", color: "#f0ede6" }}>{currentUser.name}</span>
+              <button onClick={logout} style={{ background: "none", border: "none", color: "#4a4a42", fontSize: ".7rem", letterSpacing: ".15em", textTransform: "uppercase", cursor: "pointer", transition: "color .2s" }}
+                onMouseOver={e => e.currentTarget.style.color = "#c05050"} onMouseOut={e => e.currentTarget.style.color = "#4a4a42"}>
+                Keluar
+              </button>
+            </div>
+          )}
           <button onClick={() => setCartOpen(true)} style={{ background: "none", border: "1px solid rgba(200,169,110,.35)", color: "#c8a96e", padding: ".45rem 1rem", display: "flex", alignItems: "center", gap: ".5rem", fontSize: ".7rem", letterSpacing: ".15em", textTransform: "uppercase", transition: "all .2s" }}
             onMouseOver={e => e.currentTarget.style.background = "rgba(200,169,110,.1)"}
             onMouseOut={e => e.currentTarget.style.background = "none"}>
@@ -760,236 +979,413 @@ export default function App() {
         </div>
       )}
 
-      {/* ======================== ADMIN PAGE ======================== */}
-      {page === PAGES.ADMIN && (
-        <div className="admin-layout fade-in" style={{ paddingTop: "4.5rem", display: "grid", gridTemplateColumns: "200px 1fr", minHeight: "100vh" }}>
-          {/* Sidebar */}
-          <div className="admin-sidebar" style={{ background: "#1a1a16", borderRight: "1px solid rgba(138,138,126,.1)", padding: "2rem 0" }}>
-            <div style={{ fontSize: ".6rem", letterSpacing: ".3em", textTransform: "uppercase", color: "#4a4a42", padding: "0 1.5rem", marginBottom: "1rem" }}>Manajemen</div>
-            {[{ icon: "⬡", label: "Dashboard", view: "dashboard" }, { icon: "◈", label: "Pesanan", view: "pesanan" }, { icon: "◉", label: "Meja", view: "meja" }, { icon: "◎", label: "Produk", view: "produk" }].map(({ icon, label, view }) => (
-              <button key={label} onClick={() => setAdminView(view)} style={{ background: "none", border: "none", borderLeft: `2px solid ${adminView === view ? "#c8a96e" : "transparent"}`, padding: ".65rem 1.5rem", display: "flex", gap: ".75rem", alignItems: "center", color: adminView === view ? "#c8a96e" : "#8a8a7e", fontSize: ".8rem", width: "100%", textAlign: "left", cursor: "pointer", transition: "color .2s, border-color .2s" }}>
-                {icon} {label}
-              </button>
-            ))}
-            <div style={{ fontSize: ".6rem", letterSpacing: ".3em", textTransform: "uppercase", color: "#4a4a42", padding: "1.5rem 1.5rem .75rem" }}>Navigasi</div>
-            <button onClick={() => setPage(PAGES.MENU)} style={{ background: "none", border: "none", padding: ".65rem 1.5rem", display: "flex", gap: ".75rem", alignItems: "center", color: "#8a8a7e", fontSize: ".8rem", width: "100%", textAlign: "left" }}>← Lihat Toko</button>
-          </div>
-
-          {/* Content */}
-          <div style={{ padding: "2.5rem" }}>
-            <div style={{ fontSize: ".65rem", letterSpacing: ".3em", textTransform: "uppercase", color: "#c8a96e", marginBottom: ".5rem" }}>Dashboard</div>
-            <h1 className="serif" style={{ fontSize: "1.8rem", marginBottom: "2.5rem" }}>Selamat datang, <em>Barista.</em></h1>
-
-            {/* Stats */}
-            {(adminView === "dashboard") && <div className="stats-4" style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 1, background: "rgba(138,138,126,.08)", marginBottom: "3rem" }}>
-              {[
-                { label: "Pesanan Hari Ini", value: stats.total_orders, sub: "Total order masuk", icon: "📋" },
-                { label: "Pendapatan", value: "Rp " + Number(stats.revenue).toLocaleString("id-ID"), sub: "Order selesai (hari ini)", icon: "💰" },
-                { label: "Pesanan Aktif", value: stats.active_orders, sub: "Perlu diproses", icon: "⏳" },
-                { label: "Meja Terpakai", value: `${stats.occupied_tables || 0}/${stats.total_tables || 0}`, sub: "Dari total meja", icon: "🪑" },
-              ].map(s => (
-                <div key={s.label} className="stat-card" style={{ background: "#0a0a08", padding: "2rem 1.5rem" }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: ".75rem" }}>
-                    <div style={{ fontSize: ".65rem", letterSpacing: ".25em", textTransform: "uppercase", color: "#8a8a7e" }}>{s.label}</div>
-                    <span style={{ fontSize: "1.1rem", opacity: .4 }}>{s.icon}</span>
-                  </div>
-                  <div className="serif" style={{ fontSize: "2rem", color: "#c8a96e", lineHeight: 1 }}>{s.value}</div>
-                  <div style={{ fontSize: ".75rem", color: "#4a4a42", marginTop: ".4rem" }}>{s.sub}</div>
-                </div>
-              ))}
-            </div>}
-
-            {/* Orders Table */}
-            {(adminView === "dashboard" || adminView === "pesanan") && <div style={{ fontSize: ".65rem", letterSpacing: ".3em", textTransform: "uppercase", color: "#c8a96e", marginBottom: "1.25rem" }}>Daftar Pesanan</div>}
-            {(adminView === "dashboard" || adminView === "pesanan") && <div style={{ overflowX: "auto" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: ".8rem" }}>
-                <thead>
-                  <tr>
-                    {["No. Pesanan", "Pelanggan", "Tipe", "Total", "Status", "Waktu", "Ubah Status"].map(h => (
-                      <th key={h} style={{ textAlign: "left", padding: ".65rem 1rem", fontSize: ".6rem", letterSpacing: ".2em", textTransform: "uppercase", color: "#8a8a7e", borderBottom: "1px solid rgba(138,138,126,.15)", fontWeight: 400 }}>{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {orders.map(o => (
-                    <tr key={o.order_number || o.id} style={{ transition: "background .15s" }}
-                      onMouseOver={e => e.currentTarget.style.background = "rgba(200,169,110,.02)"}
-                      onMouseOut={e => e.currentTarget.style.background = "none"}>
-                      <td style={{ padding: ".8rem 1rem", borderBottom: "1px solid rgba(138,138,126,.07)", color: "#c8a96e", fontFamily: "'Cormorant Garamond',serif" }}>{o.order_number}</td>
-                      <td style={{ padding: ".8rem 1rem", borderBottom: "1px solid rgba(138,138,126,.07)" }}>{o.customer_name}</td>
-                      <td style={{ padding: ".8rem 1rem", borderBottom: "1px solid rgba(138,138,126,.07)", color: "#8a8a7e" }}>{o.type === "dine_in" ? `Dine In${o.table_number ? " · " + o.table_number : ""}` : "Takeaway"}</td>
-                      <td style={{ padding: ".8rem 1rem", borderBottom: "1px solid rgba(138,138,126,.07)" }}>{rp(o.total)}</td>
-                      <td style={{ padding: ".8rem 1rem", borderBottom: "1px solid rgba(138,138,126,.07)" }}>
-                        <span style={{ border: `1px solid ${statusColor[o.status]}50`, color: statusColor[o.status], padding: ".2rem .6rem", fontSize: ".6rem", letterSpacing: ".15em", textTransform: "uppercase" }}>
-                          {statusLabel[o.status]}
-                        </span>
-                      </td>
-                      <td style={{ padding: ".8rem 1rem", borderBottom: "1px solid rgba(138,138,126,.07)", color: "#8a8a7e" }}>
-                        {o.created_at ? new Date(o.created_at).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" }) : "-"}
-                      </td>
-                      <td style={{ padding: ".8rem 1rem", borderBottom: "1px solid rgba(138,138,126,.07)" }}>
-                        <select value={o.status} onChange={e => updateOrderStatus(o.order_number, e.target.value)}
-                          style={{ background: "none", border: "1px solid rgba(138,138,126,.2)", color: "#8a8a7e", padding: ".3rem .5rem", fontFamily: "'Inconsolata',monospace", fontSize: ".7rem", cursor: "pointer", outline: "none" }}>
-                          {Object.entries(statusLabel).map(([v, l]) => <option key={v} value={v} style={{ background: "#1a1a16" }}>{l}</option>)}
-                        </select>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>}
-
-            {/* ─── MEJA VIEW ─────────────────────────────────────────────── */}
-            {adminView === "meja" && (
-              <div>
-                {/* Table Form Modal */}
-                {tableFormOpen && (
-                  <div style={{ position: "fixed", inset: 0, zIndex: 500 }}>
-                    <div onClick={() => setTableFormOpen(false)} style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,.75)" }} />
-                    <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%,-50%)", background: "#1a1a16", border: "1px solid rgba(200,169,110,.2)", padding: "2.5rem", width: "min(420px,90vw)" }}>
-                      <h3 className="serif" style={{ fontSize: "1.5rem", marginBottom: "1.75rem" }}>{editingTable ? "Edit Meja" : "Tambah Meja"}</h3>
-                      {tableFormError && (
-                        <div style={{ marginBottom: "1rem", padding: ".7rem 1rem", borderLeft: "2px solid #c05050", background: "rgba(139,46,46,.1)", fontSize: ".8rem", color: "#d06060" }}>{tableFormError}</div>
-                      )}
-                      <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
-                        <div>
-                          <label style={{ display: "block", fontSize: ".6rem", letterSpacing: ".2em", textTransform: "uppercase", color: "#8a8a7e", marginBottom: ".4rem" }}>Nomor Meja *</label>
-                          <input className="input-noir" placeholder="Contoh: A1" value={tableForm.table_number} onChange={e => setTableForm(f => ({ ...f, table_number: e.target.value.toUpperCase() }))} />
-                        </div>
-                        <div>
-                          <label style={{ display: "block", fontSize: ".6rem", letterSpacing: ".2em", textTransform: "uppercase", color: "#8a8a7e", marginBottom: ".4rem" }}>Kapasitas (kursi)</label>
-                          <input className="input-noir" type="number" min={1} max={20} placeholder="4" value={tableForm.capacity} onChange={e => setTableForm(f => ({ ...f, capacity: e.target.value }))} />
-                        </div>
-                        <div>
-                          <label style={{ display: "block", fontSize: ".6rem", letterSpacing: ".2em", textTransform: "uppercase", color: "#8a8a7e", marginBottom: ".4rem" }}>Lokasi</label>
-                          <input className="input-noir" placeholder="Contoh: Area Dalam, Area Luar" value={tableForm.location} onChange={e => setTableForm(f => ({ ...f, location: e.target.value }))} />
-                        </div>
-                      </div>
-                      <div style={{ display: "flex", gap: ".75rem", marginTop: "2rem" }}>
-                        <button className="btn-outline" style={{ flex: 1 }} onClick={() => setTableFormOpen(false)}>Batal</button>
-                        <button className="btn-gold" style={{ flex: 1 }} onClick={saveTable}>{editingTable ? "Simpan" : "Tambah"}</button>
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {/* Header */}
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "2rem" }}>
-                  <div>
-                    <div style={{ fontSize: ".65rem", letterSpacing: ".3em", textTransform: "uppercase", color: "#c8a96e", marginBottom: ".25rem" }}>Manajemen Meja</div>
-                    <div style={{ color: "#8a8a7e", fontSize: ".82rem" }}>
-                      {tables.filter(t => t.status === "available").length} tersedia · {tables.filter(t => t.status === "occupied").length} terpakai · {tables.length} total
-                    </div>
-                  </div>
-                  <div style={{ display: "flex", gap: ".75rem", alignItems: "center" }}>
-                    <button onClick={fetchTables} style={{ background: "none", border: "1px solid rgba(138,138,126,.2)", color: "#8a8a7e", padding: ".5rem .9rem", fontSize: ".65rem", letterSpacing: ".15em", textTransform: "uppercase", transition: "all .2s" }}
-                      onMouseOver={e => e.currentTarget.style.borderColor = "rgba(200,169,110,.4)"}
-                      onMouseOut={e => e.currentTarget.style.borderColor = "rgba(138,138,126,.2)"}>↺ Refresh</button>
-                    <button className="btn-gold" onClick={openAddTable}>+ Tambah Meja</button>
-                  </div>
-                </div>
-
-                {/* Floor Plan Visual */}
-                <div style={{ marginBottom: "2.5rem" }}>
-                  <div style={{ fontSize: ".6rem", letterSpacing: ".25em", textTransform: "uppercase", color: "#c8a96e", marginBottom: "1.25rem", display: "flex", gap: "1.5rem", alignItems: "center" }}>
-                    <span>Denah Meja</span>
-                    <span style={{ display: "inline-flex", alignItems: "center", gap: ".4rem", color: "#5c8a5c" }}><span style={{ width: 8, height: 8, borderRadius: "50%", background: "#5c8a5c", display: "inline-block" }} />Tersedia</span>
-                    <span style={{ display: "inline-flex", alignItems: "center", gap: ".4rem", color: "#c05050" }}><span style={{ width: 8, height: 8, borderRadius: "50%", background: "#c05050", display: "inline-block" }} />Terpakai</span>
-                  </div>
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(110px,1fr))", gap: ".75rem" }}>
-                    {tables.map(t => {
-                      const isOccupied = t.status === "occupied";
-                      return (
-                        <div key={t.id} style={{
-                          position: "relative", padding: "1.25rem .75rem .9rem", background: isOccupied ? "rgba(192,80,80,.08)" : "rgba(92,138,92,.06)",
-                          border: `1px solid ${isOccupied ? "rgba(192,80,80,.3)" : "rgba(92,138,92,.25)"}`, textAlign: "center", transition: "all .2s",
-                        }}>
-                          <div style={{ position: "absolute", top: 6, right: 7, width: 7, height: 7, borderRadius: "50%", background: isOccupied ? "#c05050" : "#5c8a5c" }} />
-                          <div className="serif" style={{ fontSize: "1.8rem", color: isOccupied ? "#c05050" : "#c8a96e", lineHeight: 1, marginBottom: ".3rem" }}>{t.table_number}</div>
-                          <div style={{ fontSize: ".58rem", letterSpacing: ".12em", textTransform: "uppercase", color: "#8a8a7e", marginBottom: ".2rem" }}>{t.capacity} kursi</div>
-                          {t.location && <div style={{ fontSize: ".55rem", color: "#4a4a42", letterSpacing: ".08em" }}>{t.location}</div>}
-                          <div style={{ fontSize: ".6rem", letterSpacing: ".12em", textTransform: "uppercase", marginTop: ".4rem", color: isOccupied ? "#c05050" : "#5c8a5c" }}>
-                            {isOccupied ? "Terpakai" : "Tersedia"}
-                          </div>
-                          {isOccupied && (
-                            <button onClick={() => releaseTable(t.table_number)}
-                              style={{ marginTop: ".5rem", background: "none", border: "1px solid rgba(192,80,80,.3)", color: "#c05050", padding: ".3rem .5rem", fontSize: ".55rem", letterSpacing: ".1em", textTransform: "uppercase", cursor: "pointer", width: "100%", transition: "all .2s" }}
-                              onMouseOver={e => { e.currentTarget.style.background = "rgba(192,80,80,.15)"; }}
-                              onMouseOut={e => { e.currentTarget.style.background = "none"; }}>
-                              Bebaskan
-                            </button>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                {/* Table List */}
-                <div style={{ fontSize: ".65rem", letterSpacing: ".3em", textTransform: "uppercase", color: "#c8a96e", marginBottom: "1rem" }}>Daftar Meja</div>
-                <div style={{ overflowX: "auto" }}>
-                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: ".8rem" }}>
-                    <thead>
-                      <tr>
-                        {["Nomor Meja", "Kapasitas", "Lokasi", "Status", "Aksi"].map(h => (
-                          <th key={h} style={{ textAlign: "left", padding: ".65rem 1rem", fontSize: ".6rem", letterSpacing: ".2em", textTransform: "uppercase", color: "#8a8a7e", borderBottom: "1px solid rgba(138,138,126,.15)", fontWeight: 400 }}>{h}</th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {tables.map(t => (
-                        <tr key={t.id} onMouseOver={e => e.currentTarget.style.background = "rgba(200,169,110,.02)"} onMouseOut={e => e.currentTarget.style.background = "none"}>
-                          <td style={{ padding: ".8rem 1rem", borderBottom: "1px solid rgba(138,138,126,.07)", fontFamily: "'Cormorant Garamond',serif", fontSize: "1rem", color: "#c8a96e" }}>{t.table_number}</td>
-                          <td style={{ padding: ".8rem 1rem", borderBottom: "1px solid rgba(138,138,126,.07)", color: "#8a8a7e" }}>{t.capacity} orang</td>
-                          <td style={{ padding: ".8rem 1rem", borderBottom: "1px solid rgba(138,138,126,.07)", color: "#8a8a7e" }}>{t.location || "—"}</td>
-                          <td style={{ padding: ".8rem 1rem", borderBottom: "1px solid rgba(138,138,126,.07)" }}>
-                            <span style={{ border: `1px solid ${t.status === "occupied" ? "rgba(192,80,80,.4)" : "rgba(92,138,92,.4)"}`, color: t.status === "occupied" ? "#c05050" : "#5c8a5c", padding: ".2rem .6rem", fontSize: ".6rem", letterSpacing: ".15em", textTransform: "uppercase" }}>
-                              {t.status === "occupied" ? "Terpakai" : "Tersedia"}
-                            </span>
-                          </td>
-                          <td style={{ padding: ".8rem 1rem", borderBottom: "1px solid rgba(138,138,126,.07)" }}>
-                            <div style={{ display: "flex", gap: ".5rem" }}>
-                              <button onClick={() => openEditTable(t)}
-                                style={{ background: "none", border: "1px solid rgba(138,138,126,.2)", color: "#8a8a7e", padding: ".3rem .6rem", fontSize: ".65rem", letterSpacing: ".12em", textTransform: "uppercase", cursor: "pointer", transition: "all .2s" }}
-                                onMouseOver={e => { e.currentTarget.style.borderColor = "rgba(200,169,110,.4)"; e.currentTarget.style.color = "#c8a96e"; }}
-                                onMouseOut={e => { e.currentTarget.style.borderColor = "rgba(138,138,126,.2)"; e.currentTarget.style.color = "#8a8a7e"; }}>
-                                Edit
-                              </button>
-                              <button onClick={() => deleteTable(t.id)} disabled={t.status === "occupied"}
-                                style={{ background: "none", border: "1px solid rgba(138,138,126,.2)", color: t.status === "occupied" ? "#4a4a42" : "#8a8a7e", padding: ".3rem .6rem", fontSize: ".65rem", letterSpacing: ".12em", textTransform: "uppercase", cursor: t.status === "occupied" ? "not-allowed" : "pointer", transition: "all .2s", opacity: t.status === "occupied" ? .4 : 1 }}
-                                onMouseOver={e => { if (t.status !== "occupied") { e.currentTarget.style.borderColor = "rgba(192,80,80,.4)"; e.currentTarget.style.color = "#c05050"; } }}
-                                onMouseOut={e => { e.currentTarget.style.borderColor = "rgba(138,138,126,.2)"; e.currentTarget.style.color = "#8a8a7e"; }}>
-                                Hapus
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            )}
-
-            {/* Products list */}
-            {(adminView === "dashboard" || adminView === "produk") && <div style={{ marginTop: adminView === "produk" ? "0" : "3rem" }}>
-              <div style={{ fontSize: ".65rem", letterSpacing: ".3em", textTransform: "uppercase", color: "#c8a96e", marginBottom: "1.25rem" }}>Produk</div>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(240px,1fr))", gap: 1, background: "rgba(138,138,126,.08)" }}>
-                {menu.map(p => (
-                  <div key={p.id} style={{ background: "#0a0a08", padding: "1.25rem 1.5rem" }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-                      <span className="serif" style={{ fontSize: "1rem" }}>{p.name}</span>
-                      <span style={{ color: "#c8a96e", fontSize: ".8rem" }}>{rp(p.price)}</span>
-                    </div>
-                    <div style={{ fontSize: ".65rem", letterSpacing: ".15em", textTransform: "uppercase", color: "#4a4a42", marginTop: ".4rem" }}>
-                      {p.category_name}{p.is_featured === 1 && " · ★"}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>}
+      {/* ======================== HISTORY PAGE ======================== */}
+      {page === PAGES.HISTORY && (!currentUser ? (
+        <div style={{ maxWidth: 480, margin: "0 auto", padding: "8rem 2rem 4rem", textAlign: "center" }} className="fade-in">
+          <div style={{ fontSize: "3rem", marginBottom: "1.5rem", opacity: .3 }}>📋</div>
+          <h2 className="serif" style={{ fontSize: "2rem", marginBottom: "1rem" }}>Masuk Diperlukan</h2>
+          <p style={{ color: "#8a8a7e", fontSize: ".88rem", marginBottom: "2rem" }}>Riwayat pembelian tersedia untuk pengguna terdaftar.</p>
+          <div style={{ display: "flex", gap: "1rem", justifyContent: "center" }}>
+            <button className="btn-outline" onClick={() => setPage(PAGES.MENU)}>← Menu</button>
+            <button className="btn-gold" onClick={() => { setAuthTab("login"); setAuthModal("login"); setAuthError(""); setAuthForm({ name: "", email: "", password: "" }); }}>Masuk / Daftar</button>
           </div>
         </div>
+      ) : (
+        <div style={{ maxWidth: 720, margin: "0 auto", padding: "7rem 2rem 4rem" }} className="fade-in">
+          <button onClick={() => setPage(PAGES.MENU)} style={{ background: "none", border: "none", color: "#8a8a7e", fontSize: ".7rem", letterSpacing: ".2em", textTransform: "uppercase", marginBottom: "2rem", display: "flex", alignItems: "center", gap: ".5rem" }}>← Kembali</button>
+          <div style={{ fontSize: ".65rem", letterSpacing: ".35em", textTransform: "uppercase", color: "#c8a96e", marginBottom: ".75rem" }}>— Riwayat Pembelian</div>
+          <h1 className="serif" style={{ fontSize: "2.4rem", marginBottom: ".5rem" }}>Pesanan Saya</h1>
+          <p style={{ color: "#8a8a7e", fontSize: ".85rem", marginBottom: "2.5rem" }}>Semua pesanan yang tersimpan di akun <strong style={{ color: "#f0ede6" }}>{currentUser?.name}</strong>.</p>
+
+          {historyLoading ? (
+            <div style={{ textAlign: "center", padding: "4rem 0", color: "#4a4a42", fontSize: ".85rem", letterSpacing: ".15em" }}>Memuat riwayat...</div>
+          ) : myOrders.length === 0 ? (
+            <div style={{ textAlign: "center", padding: "4rem 0", border: "1px dashed rgba(138,138,126,.2)" }}>
+              <div style={{ fontSize: "2rem", opacity: .2, marginBottom: "1rem" }}>◉</div>
+              <p style={{ color: "#4a4a42", fontSize: ".85rem" }}>Belum ada pesanan.</p>
+              <button className="btn-gold" style={{ marginTop: "1.5rem" }} onClick={() => setPage(PAGES.MENU)}>Mulai Pesan</button>
+            </div>
+          ) : myOrders.map(o => (
+            <div key={o.id} style={{ border: "1px solid rgba(138,138,126,.15)", marginBottom: "1rem", transition: "border-color .2s" }}
+              onMouseOver={e => e.currentTarget.style.borderColor = "rgba(200,169,110,.25)"}
+              onMouseOut={e => e.currentTarget.style.borderColor = "rgba(138,138,126,.15)"}>
+              <div style={{ padding: "1.25rem 1.5rem", display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer" }}
+                onClick={() => setHistoryExpandedId(historyExpandedId === o.id ? null : o.id)}>
+                <div style={{ display: "flex", gap: "1.5rem", alignItems: "center", flexWrap: "wrap" }}>
+                  <div className="serif" style={{ fontSize: "1rem", color: "#c8a96e" }}>{o.order_number}</div>
+                  <div style={{ fontSize: ".75rem", color: "#8a8a7e" }}>
+                    {o.created_at ? new Date(o.created_at).toLocaleDateString("id-ID", { day: "numeric", month: "long", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "-"}
+                  </div>
+                </div>
+                <div style={{ display: "flex", gap: "1rem", alignItems: "center" }}>
+                  <span style={{ border: `1px solid ${statusColor[o.status]}50`, color: statusColor[o.status], padding: ".2rem .6rem", fontSize: ".6rem", letterSpacing: ".15em", textTransform: "uppercase" }}>{statusLabel[o.status]}</span>
+                  <span className="serif" style={{ color: "#c8a96e" }}>{rp(o.total)}</span>
+                  <span style={{ color: "#4a4a42", fontSize: ".8rem" }}>{historyExpandedId === o.id ? "▲" : "▼"}</span>
+                </div>
+              </div>
+              {historyExpandedId === o.id && (
+                <div style={{ borderTop: "1px solid rgba(138,138,126,.1)", padding: "1.25rem 1.5rem" }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: ".5rem 2rem", marginBottom: "1rem", fontSize: ".8rem" }}>
+                    {[["Tipe", o.type === "dine_in" ? `Dine In${o.table_number ? " · Meja " + o.table_number : ""}` : "Takeaway"], ["Pembayaran", (o.payment_method || "").toUpperCase()], ["Subtotal", rp(o.subtotal)], ["Pajak", rp(o.tax)]].map(([k, v]) => (
+                      <div key={k} style={{ display: "flex", justifyContent: "space-between", borderBottom: "1px solid rgba(138,138,126,.06)", paddingBottom: ".4rem" }}>
+                        <span style={{ color: "#8a8a7e" }}>{k}</span><span>{v}</span>
+                      </div>
+                    ))}
+                  </div>
+                  {(o.items || []).map((item, i) => (
+                    <div key={i} style={{ display: "flex", justifyContent: "space-between", fontSize: ".82rem", padding: ".3rem 0", borderBottom: "1px solid rgba(138,138,126,.05)" }}>
+                      <span>{item.product_name} <span style={{ color: "#8a8a7e" }}>×{item.quantity}</span></span>
+                      <span style={{ color: "#c8a96e" }}>{rp(Number(item.price) * item.quantity)}</span>
+                    </div>
+                  ))}
+                  <button className="btn-outline" style={{ fontSize: ".65rem", padding: ".4rem 1rem", marginTop: "1rem" }} onClick={() => { setTrackInput(o.order_number); setTrackResult(null); setPage(PAGES.TRACK); }}>Lacak Pesanan</button>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      ))}
+
+      {/* ======================== ADMIN PAGE ======================== */}
+      {page === PAGES.ADMIN && (
+        currentUser?.role !== "admin" ? (
+          <div style={{ maxWidth: 480, margin: "0 auto", padding: "8rem 2rem 4rem", textAlign: "center" }} className="fade-in">
+            <div style={{ fontSize: "3rem", marginBottom: "1.5rem", opacity: .3 }}>🔒</div>
+            <h2 className="serif" style={{ fontSize: "2rem", marginBottom: "1rem" }}>Akses Ditolak</h2>
+            <p style={{ color: "#8a8a7e", fontSize: ".88rem", marginBottom: "2rem" }}>Halaman ini hanya untuk Admin.<br />Silakan masuk dengan akun admin.</p>
+            <div style={{ display: "flex", gap: "1rem", justifyContent: "center" }}>
+              <button className="btn-outline" onClick={() => setPage(PAGES.MENU)}>← Menu</button>
+              <button className="btn-gold" onClick={() => { setAuthTab("login"); setAuthModal("login"); setAuthError(""); setAuthForm({ name: "", email: "", password: "" }); }}>Masuk sebagai Admin</button>
+            </div>
+          </div>
+        ) : (
+          <div className="admin-layout fade-in" style={{ paddingTop: "4.5rem", display: "grid", gridTemplateColumns: "200px 1fr", minHeight: "100vh" }}>
+            {/* Sidebar */}
+            <div className="admin-sidebar" style={{ background: "#1a1a16", borderRight: "1px solid rgba(138,138,126,.1)", padding: "2rem 0" }}>
+              <div style={{ fontSize: ".6rem", letterSpacing: ".3em", textTransform: "uppercase", color: "#4a4a42", padding: "0 1.5rem", marginBottom: "1rem" }}>Manajemen</div>
+              {[{ icon: "⬡", label: "Dashboard", view: "dashboard" }, { icon: "◈", label: "Pesanan", view: "pesanan" }, { icon: "◉", label: "Meja", view: "meja" }, { icon: "◎", label: "Produk", view: "produk" }, { icon: "◫", label: "Pengguna", view: "pengguna" }].map(({ icon, label, view }) => (
+                <button key={label} onClick={() => setAdminView(view)} style={{ background: "none", border: "none", borderLeft: `2px solid ${adminView === view ? "#c8a96e" : "transparent"}`, padding: ".65rem 1.5rem", display: "flex", gap: ".75rem", alignItems: "center", color: adminView === view ? "#c8a96e" : "#8a8a7e", fontSize: ".8rem", width: "100%", textAlign: "left", cursor: "pointer", transition: "color .2s, border-color .2s" }}>
+                  {icon} {label}
+                </button>
+              ))}
+              <div style={{ fontSize: ".6rem", letterSpacing: ".3em", textTransform: "uppercase", color: "#4a4a42", padding: "1.5rem 1.5rem .75rem" }}>Navigasi</div>
+              <button onClick={() => setPage(PAGES.MENU)} style={{ background: "none", border: "none", padding: ".65rem 1.5rem", display: "flex", gap: ".75rem", alignItems: "center", color: "#8a8a7e", fontSize: ".8rem", width: "100%", textAlign: "left" }}>← Lihat Toko</button>
+            </div>
+
+            {/* Content */}
+            <div style={{ padding: "2.5rem" }}>
+              <div style={{ fontSize: ".65rem", letterSpacing: ".3em", textTransform: "uppercase", color: "#c8a96e", marginBottom: ".5rem" }}>Dashboard</div>
+              <h1 className="serif" style={{ fontSize: "1.8rem", marginBottom: "2.5rem" }}>Selamat datang, <em>{currentUser?.name || "Barista"}.</em></h1>
+
+              {/* Stats */}
+              {(adminView === "dashboard") && <div className="stats-4" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(180px,1fr))", gap: 1, background: "rgba(138,138,126,.08)", marginBottom: "3rem" }}>
+                {[
+                  { label: "Pesanan Hari Ini", value: stats.total_orders, sub: "Total order masuk", icon: "📋" },
+                  { label: "Pendapatan", value: "Rp " + Number(stats.revenue).toLocaleString("id-ID"), sub: "Order selesai (hari ini)", icon: "💰" },
+                  { label: "Pesanan Aktif", value: stats.active_orders, sub: "Perlu diproses", icon: "⏳" },
+                  { label: "Meja Terpakai", value: `${stats.occupied_tables || 0}/${stats.total_tables || 0}`, sub: "Dari total meja", icon: "🪑" },
+                  { label: "Total Pengguna", value: stats.total_users || 0, sub: "Akun terdaftar", icon: "👤" },
+                ].map(s => (
+                  <div key={s.label} className="stat-card" style={{ background: "#0a0a08", padding: "2rem 1.5rem" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: ".75rem" }}>
+                      <div style={{ fontSize: ".65rem", letterSpacing: ".25em", textTransform: "uppercase", color: "#8a8a7e" }}>{s.label}</div>
+                      <span style={{ fontSize: "1.1rem", opacity: .4 }}>{s.icon}</span>
+                    </div>
+                    <div className="serif" style={{ fontSize: "2rem", color: "#c8a96e", lineHeight: 1 }}>{s.value}</div>
+                    <div style={{ fontSize: ".75rem", color: "#4a4a42", marginTop: ".4rem" }}>{s.sub}</div>
+                  </div>
+                ))}
+              </div>}
+
+              {/* Orders Table */}
+              {(adminView === "dashboard" || adminView === "pesanan") && <div style={{ fontSize: ".65rem", letterSpacing: ".3em", textTransform: "uppercase", color: "#c8a96e", marginBottom: "1.25rem" }}>Daftar Pesanan</div>}
+              {(adminView === "dashboard" || adminView === "pesanan") && <div style={{ overflowX: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: ".8rem" }}>
+                  <thead>
+                    <tr>
+                      {["No. Pesanan", "Pelanggan", "Tipe", "Total", "Status", "Waktu", "Ubah Status"].map(h => (
+                        <th key={h} style={{ textAlign: "left", padding: ".65rem 1rem", fontSize: ".6rem", letterSpacing: ".2em", textTransform: "uppercase", color: "#8a8a7e", borderBottom: "1px solid rgba(138,138,126,.15)", fontWeight: 400 }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {orders.map(o => (
+                      <tr key={o.order_number || o.id} style={{ transition: "background .15s" }}
+                        onMouseOver={e => e.currentTarget.style.background = "rgba(200,169,110,.02)"}
+                        onMouseOut={e => e.currentTarget.style.background = "none"}>
+                        <td style={{ padding: ".8rem 1rem", borderBottom: "1px solid rgba(138,138,126,.07)", color: "#c8a96e", fontFamily: "'Cormorant Garamond',serif" }}>{o.order_number}</td>
+                        <td style={{ padding: ".8rem 1rem", borderBottom: "1px solid rgba(138,138,126,.07)" }}>{o.customer_name}</td>
+                        <td style={{ padding: ".8rem 1rem", borderBottom: "1px solid rgba(138,138,126,.07)", color: "#8a8a7e" }}>{o.type === "dine_in" ? `Dine In${o.table_number ? " · " + o.table_number : ""}` : "Takeaway"}</td>
+                        <td style={{ padding: ".8rem 1rem", borderBottom: "1px solid rgba(138,138,126,.07)" }}>{rp(o.total)}</td>
+                        <td style={{ padding: ".8rem 1rem", borderBottom: "1px solid rgba(138,138,126,.07)" }}>
+                          <span style={{ border: `1px solid ${statusColor[o.status]}50`, color: statusColor[o.status], padding: ".2rem .6rem", fontSize: ".6rem", letterSpacing: ".15em", textTransform: "uppercase" }}>
+                            {statusLabel[o.status]}
+                          </span>
+                        </td>
+                        <td style={{ padding: ".8rem 1rem", borderBottom: "1px solid rgba(138,138,126,.07)", color: "#8a8a7e" }}>
+                          {o.created_at ? new Date(o.created_at).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" }) : "-"}
+                        </td>
+                        <td style={{ padding: ".8rem 1rem", borderBottom: "1px solid rgba(138,138,126,.07)" }}>
+                          <select value={o.status} onChange={e => updateOrderStatus(o.order_number, e.target.value)}
+                            style={{ background: "none", border: "1px solid rgba(138,138,126,.2)", color: "#8a8a7e", padding: ".3rem .5rem", fontFamily: "'Inconsolata',monospace", fontSize: ".7rem", cursor: "pointer", outline: "none" }}>
+                            {Object.entries(statusLabel).map(([v, l]) => <option key={v} value={v} style={{ background: "#1a1a16" }}>{l}</option>)}
+                          </select>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>}
+
+              {/* ─── MEJA VIEW ─────────────────────────────────────────────── */}
+              {adminView === "meja" && (
+                <div>
+                  {/* Table Form Modal */}
+                  {tableFormOpen && (
+                    <div style={{ position: "fixed", inset: 0, zIndex: 500 }}>
+                      <div onClick={() => setTableFormOpen(false)} style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,.75)" }} />
+                      <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%,-50%)", background: "#1a1a16", border: "1px solid rgba(200,169,110,.2)", padding: "2.5rem", width: "min(420px,90vw)" }}>
+                        <h3 className="serif" style={{ fontSize: "1.5rem", marginBottom: "1.75rem" }}>{editingTable ? "Edit Meja" : "Tambah Meja"}</h3>
+                        {tableFormError && (
+                          <div style={{ marginBottom: "1rem", padding: ".7rem 1rem", borderLeft: "2px solid #c05050", background: "rgba(139,46,46,.1)", fontSize: ".8rem", color: "#d06060" }}>{tableFormError}</div>
+                        )}
+                        <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
+                          <div>
+                            <label style={{ display: "block", fontSize: ".6rem", letterSpacing: ".2em", textTransform: "uppercase", color: "#8a8a7e", marginBottom: ".4rem" }}>Nomor Meja *</label>
+                            <input className="input-noir" placeholder="Contoh: A1" value={tableForm.table_number} onChange={e => setTableForm(f => ({ ...f, table_number: e.target.value.toUpperCase() }))} />
+                          </div>
+                          <div>
+                            <label style={{ display: "block", fontSize: ".6rem", letterSpacing: ".2em", textTransform: "uppercase", color: "#8a8a7e", marginBottom: ".4rem" }}>Kapasitas (kursi)</label>
+                            <input className="input-noir" type="number" min={1} max={20} placeholder="4" value={tableForm.capacity} onChange={e => setTableForm(f => ({ ...f, capacity: e.target.value }))} />
+                          </div>
+                          <div>
+                            <label style={{ display: "block", fontSize: ".6rem", letterSpacing: ".2em", textTransform: "uppercase", color: "#8a8a7e", marginBottom: ".4rem" }}>Lokasi</label>
+                            <input className="input-noir" placeholder="Contoh: Area Dalam, Area Luar" value={tableForm.location} onChange={e => setTableForm(f => ({ ...f, location: e.target.value }))} />
+                          </div>
+                        </div>
+                        <div style={{ display: "flex", gap: ".75rem", marginTop: "2rem" }}>
+                          <button className="btn-outline" style={{ flex: 1 }} onClick={() => setTableFormOpen(false)}>Batal</button>
+                          <button className="btn-gold" style={{ flex: 1 }} onClick={saveTable}>{editingTable ? "Simpan" : "Tambah"}</button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Header */}
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "2rem" }}>
+                    <div>
+                      <div style={{ fontSize: ".65rem", letterSpacing: ".3em", textTransform: "uppercase", color: "#c8a96e", marginBottom: ".25rem" }}>Manajemen Meja</div>
+                      <div style={{ color: "#8a8a7e", fontSize: ".82rem" }}>
+                        {tables.filter(t => t.status === "available").length} tersedia · {tables.filter(t => t.status === "occupied").length} terpakai · {tables.length} total
+                      </div>
+                    </div>
+                    <div style={{ display: "flex", gap: ".75rem", alignItems: "center" }}>
+                      <button onClick={fetchTables} style={{ background: "none", border: "1px solid rgba(138,138,126,.2)", color: "#8a8a7e", padding: ".5rem .9rem", fontSize: ".65rem", letterSpacing: ".15em", textTransform: "uppercase", transition: "all .2s" }}
+                        onMouseOver={e => e.currentTarget.style.borderColor = "rgba(200,169,110,.4)"}
+                        onMouseOut={e => e.currentTarget.style.borderColor = "rgba(138,138,126,.2)"}>↺ Refresh</button>
+                      <button className="btn-gold" onClick={openAddTable}>+ Tambah Meja</button>
+                    </div>
+                  </div>
+
+                  {/* Floor Plan Visual */}
+                  <div style={{ marginBottom: "2.5rem" }}>
+                    <div style={{ fontSize: ".6rem", letterSpacing: ".25em", textTransform: "uppercase", color: "#c8a96e", marginBottom: "1.25rem", display: "flex", gap: "1.5rem", alignItems: "center" }}>
+                      <span>Denah Meja</span>
+                      <span style={{ display: "inline-flex", alignItems: "center", gap: ".4rem", color: "#5c8a5c" }}><span style={{ width: 8, height: 8, borderRadius: "50%", background: "#5c8a5c", display: "inline-block" }} />Tersedia</span>
+                      <span style={{ display: "inline-flex", alignItems: "center", gap: ".4rem", color: "#c05050" }}><span style={{ width: 8, height: 8, borderRadius: "50%", background: "#c05050", display: "inline-block" }} />Terpakai</span>
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(110px,1fr))", gap: ".75rem" }}>
+                      {tables.map(t => {
+                        const isOccupied = t.status === "occupied";
+                        return (
+                          <div key={t.id} style={{
+                            position: "relative", padding: "1.25rem .75rem .9rem", background: isOccupied ? "rgba(192,80,80,.08)" : "rgba(92,138,92,.06)",
+                            border: `1px solid ${isOccupied ? "rgba(192,80,80,.3)" : "rgba(92,138,92,.25)"}`, textAlign: "center", transition: "all .2s",
+                          }}>
+                            <div style={{ position: "absolute", top: 6, right: 7, width: 7, height: 7, borderRadius: "50%", background: isOccupied ? "#c05050" : "#5c8a5c" }} />
+                            <div className="serif" style={{ fontSize: "1.8rem", color: isOccupied ? "#c05050" : "#c8a96e", lineHeight: 1, marginBottom: ".3rem" }}>{t.table_number}</div>
+                            <div style={{ fontSize: ".58rem", letterSpacing: ".12em", textTransform: "uppercase", color: "#8a8a7e", marginBottom: ".2rem" }}>{t.capacity} kursi</div>
+                            {t.location && <div style={{ fontSize: ".55rem", color: "#4a4a42", letterSpacing: ".08em" }}>{t.location}</div>}
+                            <div style={{ fontSize: ".6rem", letterSpacing: ".12em", textTransform: "uppercase", marginTop: ".4rem", color: isOccupied ? "#c05050" : "#5c8a5c" }}>
+                              {isOccupied ? "Terpakai" : "Tersedia"}
+                            </div>
+                            {isOccupied && (
+                              <button onClick={() => releaseTable(t.table_number)}
+                                style={{ marginTop: ".5rem", background: "none", border: "1px solid rgba(192,80,80,.3)", color: "#c05050", padding: ".3rem .5rem", fontSize: ".55rem", letterSpacing: ".1em", textTransform: "uppercase", cursor: "pointer", width: "100%", transition: "all .2s" }}
+                                onMouseOver={e => { e.currentTarget.style.background = "rgba(192,80,80,.15)"; }}
+                                onMouseOut={e => { e.currentTarget.style.background = "none"; }}>
+                                Bebaskan
+                              </button>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Table List */}
+                  <div style={{ fontSize: ".65rem", letterSpacing: ".3em", textTransform: "uppercase", color: "#c8a96e", marginBottom: "1rem" }}>Daftar Meja</div>
+                  <div style={{ overflowX: "auto" }}>
+                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: ".8rem" }}>
+                      <thead>
+                        <tr>
+                          {["Nomor Meja", "Kapasitas", "Lokasi", "Status", "Aksi"].map(h => (
+                            <th key={h} style={{ textAlign: "left", padding: ".65rem 1rem", fontSize: ".6rem", letterSpacing: ".2em", textTransform: "uppercase", color: "#8a8a7e", borderBottom: "1px solid rgba(138,138,126,.15)", fontWeight: 400 }}>{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {tables.map(t => (
+                          <tr key={t.id} onMouseOver={e => e.currentTarget.style.background = "rgba(200,169,110,.02)"} onMouseOut={e => e.currentTarget.style.background = "none"}>
+                            <td style={{ padding: ".8rem 1rem", borderBottom: "1px solid rgba(138,138,126,.07)", fontFamily: "'Cormorant Garamond',serif", fontSize: "1rem", color: "#c8a96e" }}>{t.table_number}</td>
+                            <td style={{ padding: ".8rem 1rem", borderBottom: "1px solid rgba(138,138,126,.07)", color: "#8a8a7e" }}>{t.capacity} orang</td>
+                            <td style={{ padding: ".8rem 1rem", borderBottom: "1px solid rgba(138,138,126,.07)", color: "#8a8a7e" }}>{t.location || "—"}</td>
+                            <td style={{ padding: ".8rem 1rem", borderBottom: "1px solid rgba(138,138,126,.07)" }}>
+                              <span style={{ border: `1px solid ${t.status === "occupied" ? "rgba(192,80,80,.4)" : "rgba(92,138,92,.4)"}`, color: t.status === "occupied" ? "#c05050" : "#5c8a5c", padding: ".2rem .6rem", fontSize: ".6rem", letterSpacing: ".15em", textTransform: "uppercase" }}>
+                                {t.status === "occupied" ? "Terpakai" : "Tersedia"}
+                              </span>
+                            </td>
+                            <td style={{ padding: ".8rem 1rem", borderBottom: "1px solid rgba(138,138,126,.07)" }}>
+                              <div style={{ display: "flex", gap: ".5rem" }}>
+                                <button onClick={() => openEditTable(t)}
+                                  style={{ background: "none", border: "1px solid rgba(138,138,126,.2)", color: "#8a8a7e", padding: ".3rem .6rem", fontSize: ".65rem", letterSpacing: ".12em", textTransform: "uppercase", cursor: "pointer", transition: "all .2s" }}
+                                  onMouseOver={e => { e.currentTarget.style.borderColor = "rgba(200,169,110,.4)"; e.currentTarget.style.color = "#c8a96e"; }}
+                                  onMouseOut={e => { e.currentTarget.style.borderColor = "rgba(138,138,126,.2)"; e.currentTarget.style.color = "#8a8a7e"; }}>
+                                  Edit
+                                </button>
+                                <button onClick={() => deleteTable(t.id)} disabled={t.status === "occupied"}
+                                  style={{ background: "none", border: "1px solid rgba(138,138,126,.2)", color: t.status === "occupied" ? "#4a4a42" : "#8a8a7e", padding: ".3rem .6rem", fontSize: ".65rem", letterSpacing: ".12em", textTransform: "uppercase", cursor: t.status === "occupied" ? "not-allowed" : "pointer", transition: "all .2s", opacity: t.status === "occupied" ? .4 : 1 }}
+                                  onMouseOver={e => { if (t.status !== "occupied") { e.currentTarget.style.borderColor = "rgba(192,80,80,.4)"; e.currentTarget.style.color = "#c05050"; } }}
+                                  onMouseOut={e => { e.currentTarget.style.borderColor = "rgba(138,138,126,.2)"; e.currentTarget.style.color = "#8a8a7e"; }}>
+                                  Hapus
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {/* Products list */}
+              {(adminView === "dashboard" || adminView === "produk") && <div style={{ marginTop: adminView === "produk" ? "0" : "3rem" }}>
+                <div style={{ fontSize: ".65rem", letterSpacing: ".3em", textTransform: "uppercase", color: "#c8a96e", marginBottom: "1.25rem" }}>Produk</div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(240px,1fr))", gap: 1, background: "rgba(138,138,126,.08)" }}>
+                  {menu.map(p => (
+                    <div key={p.id} style={{ background: "#0a0a08", padding: "1.25rem 1.5rem" }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                        <span className="serif" style={{ fontSize: "1rem" }}>{p.name}</span>
+                        <span style={{ color: "#c8a96e", fontSize: ".8rem" }}>{rp(p.price)}</span>
+                      </div>
+                      <div style={{ fontSize: ".65rem", letterSpacing: ".15em", textTransform: "uppercase", color: "#4a4a42", marginTop: ".4rem" }}>
+                        {p.category_name}{p.is_featured === 1 && " · ★"}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>}
+
+              {/* ─── PENGGUNA VIEW ──────────────────────────────────────────── */}
+              {adminView === "pengguna" && (
+                <div>
+                  {/* User Form Modal */}
+                  {userFormOpen && (
+                    <div style={{ position: "fixed", inset: 0, zIndex: 500 }}>
+                      <div onClick={() => setUserFormOpen(false)} style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,.75)" }} />
+                      <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%,-50%)", background: "#1a1a16", border: "1px solid rgba(200,169,110,.2)", padding: "2.5rem", width: "min(420px,90vw)" }}>
+                        <h3 className="serif" style={{ fontSize: "1.5rem", marginBottom: "1.75rem" }}>{editingUser ? "Edit Pengguna" : "Tambah Pengguna"}</h3>
+                        {userFormError && (
+                          <div style={{ marginBottom: "1rem", padding: ".7rem 1rem", borderLeft: "2px solid #c05050", background: "rgba(139,46,46,.1)", fontSize: ".8rem", color: "#d06060" }}>{userFormError}</div>
+                        )}
+                        <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
+                          <div>
+                            <label style={{ display: "block", fontSize: ".6rem", letterSpacing: ".2em", textTransform: "uppercase", color: "#8a8a7e", marginBottom: ".4rem" }}>Nama *</label>
+                            <input className="input-noir" value={userForm.name} onChange={e => setUserForm(f => ({ ...f, name: e.target.value }))} placeholder="Nama lengkap" />
+                          </div>
+                          <div>
+                            <label style={{ display: "block", fontSize: ".6rem", letterSpacing: ".2em", textTransform: "uppercase", color: "#8a8a7e", marginBottom: ".4rem" }}>Email *</label>
+                            <input className="input-noir" type="email" value={userForm.email} onChange={e => setUserForm(f => ({ ...f, email: e.target.value }))} placeholder="email@domain.com" />
+                          </div>
+                          <div>
+                            <label style={{ display: "block", fontSize: ".6rem", letterSpacing: ".2em", textTransform: "uppercase", color: "#8a8a7e", marginBottom: ".4rem" }}>Password {editingUser && <span style={{ color: "#4a4a42" }}>(kosongkan jika tidak diubah)</span>}</label>
+                            <input className="input-noir" type="password" value={userForm.password} onChange={e => setUserForm(f => ({ ...f, password: e.target.value }))} placeholder="Min. 6 karakter" />
+                          </div>
+                          <div>
+                            <label style={{ display: "block", fontSize: ".6rem", letterSpacing: ".2em", textTransform: "uppercase", color: "#8a8a7e", marginBottom: ".4rem" }}>Role *</label>
+                            <select className="input-noir" value={userForm.role} onChange={e => setUserForm(f => ({ ...f, role: e.target.value }))}>
+                              <option value="guest">Guest — Pesan & Lacak</option>
+                              <option value="user">User — Pesan, Lacak & Riwayat</option>
+                              <option value="admin">Admin — Akses Penuh</option>
+                            </select>
+                          </div>
+                        </div>
+                        <div style={{ display: "flex", gap: ".75rem", marginTop: "2rem" }}>
+                          <button className="btn-outline" style={{ flex: 1 }} onClick={() => setUserFormOpen(false)}>Batal</button>
+                          <button className="btn-gold" style={{ flex: 1 }} onClick={saveUser}>{editingUser ? "Simpan" : "Tambah"}</button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "2rem" }}>
+                    <div>
+                      <div style={{ fontSize: ".65rem", letterSpacing: ".3em", textTransform: "uppercase", color: "#c8a96e", marginBottom: ".25rem" }}>Manajemen Pengguna</div>
+                      <div style={{ color: "#8a8a7e", fontSize: ".82rem" }}>{userList.length} pengguna terdaftar</div>
+                    </div>
+                    <button className="btn-gold" onClick={openAddUser}>+ Tambah Pengguna</button>
+                  </div>
+
+                  <div style={{ overflowX: "auto" }}>
+                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: ".8rem" }}>
+                      <thead>
+                        <tr>
+                          {["Nama", "Email", "Role", "Bergabung", "Aksi"].map(h => (
+                            <th key={h} style={{ textAlign: "left", padding: ".65rem 1rem", fontSize: ".6rem", letterSpacing: ".2em", textTransform: "uppercase", color: "#8a8a7e", borderBottom: "1px solid rgba(138,138,126,.15)", fontWeight: 400 }}>{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {userList.map(u => (
+                          <tr key={u.id} onMouseOver={e => e.currentTarget.style.background = "rgba(200,169,110,.02)"} onMouseOut={e => e.currentTarget.style.background = "none"}>
+                            <td style={{ padding: ".8rem 1rem", borderBottom: "1px solid rgba(138,138,126,.07)", fontFamily: "'Cormorant Garamond',serif", fontSize: "1rem", color: "#f0ede6" }}>{u.name}</td>
+                            <td style={{ padding: ".8rem 1rem", borderBottom: "1px solid rgba(138,138,126,.07)", color: "#8a8a7e" }}>{u.email}</td>
+                            <td style={{ padding: ".8rem 1rem", borderBottom: "1px solid rgba(138,138,126,.07)" }}>
+                              <span style={{ border: `1px solid ${ROLE_COLOR[u.role] || "#8a8a7e"}50`, color: ROLE_COLOR[u.role] || "#8a8a7e", padding: ".2rem .6rem", fontSize: ".6rem", letterSpacing: ".15em", textTransform: "uppercase" }}>
+                                {ROLE_LABEL[u.role] || u.role}
+                              </span>
+                            </td>
+                            <td style={{ padding: ".8rem 1rem", borderBottom: "1px solid rgba(138,138,126,.07)", color: "#8a8a7e" }}>
+                              {u.created_at ? new Date(u.created_at).toLocaleDateString("id-ID") : "-"}
+                            </td>
+                            <td style={{ padding: ".8rem 1rem", borderBottom: "1px solid rgba(138,138,126,.07)" }}>
+                              <div style={{ display: "flex", gap: ".5rem" }}>
+                                <button onClick={() => openEditUser(u)}
+                                  style={{ background: "none", border: "1px solid rgba(138,138,126,.2)", color: "#8a8a7e", padding: ".3rem .6rem", fontSize: ".65rem", letterSpacing: ".12em", textTransform: "uppercase", cursor: "pointer", transition: "all .2s" }}
+                                  onMouseOver={e => { e.currentTarget.style.borderColor = "rgba(200,169,110,.4)"; e.currentTarget.style.color = "#c8a96e"; }}
+                                  onMouseOut={e => { e.currentTarget.style.borderColor = "rgba(138,138,126,.2)"; e.currentTarget.style.color = "#8a8a7e"; }}>
+                                  Edit
+                                </button>
+                                <button onClick={() => deleteUser(u.id)} disabled={u.id === currentUser?.id}
+                                  style={{ background: "none", border: "1px solid rgba(138,138,126,.2)", color: u.id === currentUser?.id ? "#4a4a42" : "#8a8a7e", padding: ".3rem .6rem", fontSize: ".65rem", letterSpacing: ".12em", textTransform: "uppercase", cursor: u.id === currentUser?.id ? "not-allowed" : "pointer", transition: "all .2s", opacity: u.id === currentUser?.id ? .4 : 1 }}
+                                  onMouseOver={e => { if (u.id !== currentUser?.id) { e.currentTarget.style.borderColor = "rgba(192,80,80,.4)"; e.currentTarget.style.color = "#c05050"; } }}
+                                  onMouseOut={e => { if (u.id !== currentUser?.id) { e.currentTarget.style.borderColor = "rgba(138,138,126,.2)"; e.currentTarget.style.color = "#8a8a7e"; } }}>
+                                  Hapus
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+            </div>
+          </div>
+        )
       )}
     </div>
   );
