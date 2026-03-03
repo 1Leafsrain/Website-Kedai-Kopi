@@ -17,13 +17,14 @@ const GrainBg = () => (
 );
 
 // --- Pages ---
-const PAGES = { MENU: "menu", CART: "cart", CHECKOUT: "checkout", CONFIRM: "confirm", TRACK: "track", ADMIN: "admin", HISTORY: "history" };
+const PAGES = { LOGIN: "login", MENU: "menu", CART: "cart", CHECKOUT: "checkout", CONFIRM: "confirm", TRACK: "track", ADMIN: "admin", HISTORY: "history" };
 
 const ROLE_LABEL = { guest: "Tamu", user: "Pengguna", admin: "Admin" };
 const ROLE_COLOR = { guest: "#8a8a7e", user: "#c8a96e", admin: "#60dd60" };
 
 export default function App() {
-  const [page, setPage] = useState(PAGES.MENU);
+  const [page, setPage] = useState(PAGES.LOGIN);
+  const [loginPageView, setLoginPageView] = useState(null); // null | "user" | "admin"
   const [cart, setCart] = useState([]);
   const [activeCat, setActiveCat] = useState("all");
   const [cartOpen, setCartOpen] = useState(false);
@@ -90,7 +91,8 @@ export default function App() {
     setCurrentUser(null);
     setOrders([]);
     setStats({ total_orders: 0, revenue: 0, active_orders: 0, total_products: 0, total_tables: 0, occupied_tables: 0 });
-    setPage(PAGES.MENU);
+    setLoginPageView(null);
+    setPage(PAGES.LOGIN);
     showToast("Berhasil keluar");
   };
 
@@ -107,9 +109,11 @@ export default function App() {
       if (!res.ok) { setAuthError(data.error || "Gagal masuk"); return; }
       saveAuth(data.user, data.token);
       setAuthModal(null);
+      setLoginPageView(null);
       setAuthForm({ name: "", email: "", password: "" });
       showToast(`Selamat datang, ${data.user.name}!`);
       if (data.user.role === "admin") setPage(PAGES.ADMIN);
+      else setPage(PAGES.MENU);
     } catch { setAuthError("Terjadi kesalahan, coba lagi"); }
     finally { setAuthLoading(false); }
   };
@@ -200,6 +204,7 @@ export default function App() {
         setAuthToken(tk);
         fetchOrders(tk);
         fetchStats(tk);
+        setPage(user.role === "admin" ? PAGES.ADMIN : PAGES.MENU);
       } catch { logout(); }
     }
   }, []);
@@ -519,8 +524,9 @@ export default function App() {
       )}
 
       {/* Navbar */}
+      {page !== PAGES.LOGIN && (
       <nav style={{ position: "fixed", top: 0, left: 0, right: 0, zIndex: 100, padding: "1.1rem 2rem", display: "flex", alignItems: "center", justifyContent: "space-between", borderBottom: "1px solid rgba(200,169,110,.12)", background: "rgba(10,10,8,.92)", backdropFilter: "blur(12px)" }}>
-        <button onClick={() => setPage(PAGES.MENU)} style={{ background: "none", border: "none", color: "#f0ede6", fontSize: "1.2rem", letterSpacing: ".25em", textTransform: "uppercase", fontFamily: "'Cormorant Garamond',serif", cursor: "pointer" }}>
+        <button onClick={() => setPage(currentUser || page !== PAGES.LOGIN ? PAGES.MENU : PAGES.LOGIN)} style={{ background: "none", border: "none", color: "#f0ede6", fontSize: "1.2rem", letterSpacing:".25em", textTransform: "uppercase", fontFamily: "'Cormorant Garamond',serif", cursor: "pointer" }}>
           Noir <span style={{ color: "#c8a96e" }}>●</span> Coffee
         </button>
         <div style={{ display: "flex", gap: "2rem", alignItems: "center" }} className="nav-links">
@@ -560,6 +566,7 @@ export default function App() {
           </button>
         </div>
       </nav>
+      )}
 
       {/* Cart Sidebar */}
       {cartOpen && (
@@ -608,6 +615,195 @@ export default function App() {
                 </button>
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* ======================== LOGIN PAGE ======================== */}
+      {page === PAGES.LOGIN && (
+        <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: "2rem 1.5rem", position: "relative" }}>
+          {/* Background radial glow */}
+          <div style={{ position: "fixed", inset: 0, background: "radial-gradient(ellipse at 50% 40%, rgba(200,169,110,.06) 0%, transparent 65%)", pointerEvents: "none" }} />
+
+          <div style={{ width: "100%", maxWidth: 520, animation: "fadeIn .6s ease forwards" }}>
+            {/* Brand */}
+            <div style={{ textAlign: "center", marginBottom: "3.5rem" }}>
+              {/* Decorative ring */}
+              <div style={{ width: 90, height: 90, border: "1px solid rgba(200,169,110,.18)", borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 1.75rem", position: "relative" }}>
+                <div style={{ width: 68, height: 68, border: "1px solid rgba(200,169,110,.35)", borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", background: "radial-gradient(circle, rgba(200,169,110,.05) 0%, transparent 70%)" }}>
+                  <span style={{ fontSize: "1.9rem" }}>☕</span>
+                </div>
+              </div>
+              <h1 className="serif" style={{ fontSize: "clamp(2.2rem,6vw,3rem)", letterSpacing: ".08em", marginBottom: ".5rem" }}>
+                Noir <span style={{ color: "#c8a96e" }}>●</span> Coffee
+              </h1>
+              <p style={{ fontSize: ".65rem", letterSpacing: ".35em", textTransform: "uppercase", color: "#8a8a7e" }}>
+                Silakan pilih cara masuk
+              </p>
+            </div>
+
+            {/* Divider */}
+            <div style={{ display: "flex", alignItems: "center", gap: "1rem", marginBottom: "2rem" }}>
+              <div style={{ flex: 1, height: 1, background: "rgba(138,138,126,.15)" }} />
+              <span style={{ fontSize: ".55rem", letterSpacing: ".3em", textTransform: "uppercase", color: "#4a4a42" }}>Mode Akses</span>
+              <div style={{ flex: 1, height: 1, background: "rgba(138,138,126,.15)" }} />
+            </div>
+
+            {/* Selection cards */}
+            <div style={{ display: "flex", flexDirection: "column", gap: ".75rem", marginBottom: "2rem" }}>
+
+              {/* ── GUEST CARD ── */}
+              <div style={{ border: "1px solid rgba(138,138,126,.18)", background: "#111110", padding: "1.25rem 1.5rem", transition: "border-color .25s, background .25s", cursor: "pointer" }}
+                onMouseOver={e => { e.currentTarget.style.borderColor = "rgba(200,169,110,.25)"; e.currentTarget.style.background = "#1a1a16"; }}
+                onMouseOut={e => { e.currentTarget.style.borderColor = "rgba(138,138,126,.18)"; e.currentTarget.style.background = "#111110"; }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "1rem" }}>
+                    <div style={{ width: 40, height: 40, border: "1px solid rgba(138,138,126,.25)", borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#8a8a7e" strokeWidth="1.5"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.58-7 8-7s8 3 8 7"/></svg>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: ".75rem", letterSpacing: ".2em", textTransform: "uppercase", color: "#f0ede6", marginBottom: ".2rem" }}>Tamu</div>
+                      <div style={{ fontSize: ".72rem", color: "#8a8a7e" }}>Jelajahi menu & lacak pesanan tanpa akun</div>
+                    </div>
+                  </div>
+                  <button className="btn-outline" style={{ flexShrink: 0, padding: ".5rem 1rem", fontSize: ".62rem" }}
+                    onClick={() => setPage(PAGES.MENU)}>
+                    Lanjutkan →
+                  </button>
+                </div>
+              </div>
+
+              {/* ── USER CARD ── */}
+              <div style={{ border: `1px solid ${loginPageView === "user" ? "rgba(200,169,110,.4)" : "rgba(138,138,126,.18)"}`, background: loginPageView === "user" ? "#1a1a16" : "#111110", transition: "border-color .25s, background .25s" }}>
+                <div style={{ padding: "1.25rem 1.5rem", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "space-between" }}
+                  onMouseOver={e => { if (loginPageView !== "user") { e.currentTarget.closest("div").style.borderColor = "rgba(200,169,110,.25)"; e.currentTarget.closest("div").style.background = "#1a1a16"; } }}
+                  onMouseOut={e => { if (loginPageView !== "user") { e.currentTarget.closest("div").style.borderColor = "rgba(138,138,126,.18)"; e.currentTarget.closest("div").style.background = "#111110"; } }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "1rem" }}>
+                    <div style={{ width: 40, height: 40, border: `1px solid ${loginPageView === "user" ? "rgba(200,169,110,.5)" : "rgba(138,138,126,.25)"}`, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, transition: "border-color .25s" }}>
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={loginPageView === "user" ? "#c8a96e" : "#8a8a7e"} strokeWidth="1.5"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.58-7 8-7s8 3 8 7"/><path d="M16 3.5c1.66 0 3 1.34 3 3M19 8a3 3 0 010 0" strokeDasharray="1 2"/></svg>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: ".75rem", letterSpacing: ".2em", textTransform: "uppercase", color: loginPageView === "user" ? "#c8a96e" : "#f0ede6", marginBottom: ".2rem", transition: "color .25s" }}>Pengguna</div>
+                      <div style={{ fontSize: ".72rem", color: "#8a8a7e" }}>Masuk atau daftar untuk riwayat pesanan</div>
+                    </div>
+                  </div>
+                  <button className={loginPageView === "user" ? "btn-gold" : "btn-outline"} style={{ flexShrink: 0, padding: ".5rem 1rem", fontSize: ".62rem" }}
+                    onClick={() => { setLoginPageView(loginPageView === "user" ? null : "user"); setAuthTab("login"); setAuthError(""); setAuthForm({ name: "", email: "", password: "" }); }}>
+                    {loginPageView === "user" ? "Tutup ×" : "Masuk / Daftar →"}
+                  </button>
+                </div>
+
+                {/* Inline user login/register form */}
+                {loginPageView === "user" && (
+                  <div style={{ padding: "0 1.5rem 1.5rem", borderTop: "1px solid rgba(138,138,126,.12)", paddingTop: "1.25rem" }}>
+                    {/* Tabs */}
+                    <div style={{ display: "flex", borderBottom: "1px solid rgba(138,138,126,.15)", marginBottom: "1.5rem" }}>
+                      {[["login", "Masuk"], ["register", "Daftar"]].map(([tab, label]) => (
+                        <button key={tab} onClick={() => { setAuthTab(tab); setAuthError(""); }} style={{ flex: 1, background: "none", border: "none", borderBottom: `2px solid ${authTab === tab ? "#c8a96e" : "transparent"}`, color: authTab === tab ? "#c8a96e" : "#8a8a7e", padding: ".6rem", fontSize: ".68rem", letterSpacing: ".2em", textTransform: "uppercase", marginBottom: -1, cursor: "pointer", transition: "all .2s" }}>
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+
+                    {authError && (
+                      <div style={{ marginBottom: "1rem", padding: ".65rem .9rem", borderLeft: "2px solid #c05050", background: "rgba(139,46,46,.1)", fontSize: ".78rem", color: "#d06060" }}>{authError}</div>
+                    )}
+
+                    <div style={{ display: "flex", flexDirection: "column", gap: ".9rem" }}>
+                      {authTab === "register" && (
+                        <div>
+                          <label style={{ display: "block", fontSize: ".58rem", letterSpacing: ".2em", textTransform: "uppercase", color: "#8a8a7e", marginBottom: ".35rem" }}>Nama *</label>
+                          <input className="input-noir" placeholder="Nama lengkap" value={authForm.name} onChange={e => setAuthForm(f => ({ ...f, name: e.target.value }))} />
+                        </div>
+                      )}
+                      <div>
+                        <label style={{ display: "block", fontSize: ".58rem", letterSpacing: ".2em", textTransform: "uppercase", color: "#8a8a7e", marginBottom: ".35rem" }}>Email *</label>
+                        <input className="input-noir" type="email" placeholder="email@kamu.id" value={authForm.email} onChange={e => setAuthForm(f => ({ ...f, email: e.target.value }))} onKeyDown={e => e.key === "Enter" && handleAuthSubmit()} />
+                      </div>
+                      <div>
+                        <label style={{ display: "block", fontSize: ".58rem", letterSpacing: ".2em", textTransform: "uppercase", color: "#8a8a7e", marginBottom: ".35rem" }}>Password *</label>
+                        <input className="input-noir" type="password" placeholder="Min. 6 karakter" value={authForm.password} onChange={e => setAuthForm(f => ({ ...f, password: e.target.value }))} onKeyDown={e => e.key === "Enter" && handleAuthSubmit()} />
+                      </div>
+                    </div>
+
+                    <button className="btn-gold" style={{ width: "100%", marginTop: "1.25rem", opacity: authLoading ? .6 : 1 }} onClick={handleAuthSubmit} disabled={authLoading}>
+                      {authLoading ? "Memproses..." : authTab === "login" ? "Masuk" : "Daftar & Masuk"}
+                    </button>
+                    {authTab === "login" && (
+                      <p style={{ marginTop: "1rem", fontSize: ".72rem", color: "#8a8a7e", textAlign: "center" }}>
+                        Belum punya akun?{" "}
+                        <button onClick={() => { setAuthTab("register"); setAuthError(""); }} style={{ background: "none", border: "none", color: "#c8a96e", cursor: "pointer", fontSize: ".72rem", textDecoration: "underline" }}>Daftar sekarang</button>
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* ── ADMIN CARD ── */}
+              <div style={{ border: `1px solid ${loginPageView === "admin" ? "rgba(96,221,96,.3)" : "rgba(138,138,126,.18)"}`, background: loginPageView === "admin" ? "#0f1a0f" : "#111110", transition: "border-color .25s, background .25s" }}>
+                <div style={{ padding: "1.25rem 1.5rem", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "space-between" }}
+                  onMouseOver={e => { if (loginPageView !== "admin") { e.currentTarget.closest("div").style.borderColor = "rgba(96,221,96,.2)"; e.currentTarget.closest("div").style.background = "#111510"; } }}
+                  onMouseOut={e => { if (loginPageView !== "admin") { e.currentTarget.closest("div").style.borderColor = "rgba(138,138,126,.18)"; e.currentTarget.closest("div").style.background = "#111110"; } }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "1rem" }}>
+                    <div style={{ width: 40, height: 40, border: `1px solid ${loginPageView === "admin" ? "rgba(96,221,96,.4)" : "rgba(138,138,126,.25)"}`, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, transition: "border-color .25s" }}>
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={loginPageView === "admin" ? "#60dd60" : "#8a8a7e"} strokeWidth="1.5"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: ".75rem", letterSpacing: ".2em", textTransform: "uppercase", color: loginPageView === "admin" ? "#60dd60" : "#f0ede6", marginBottom: ".2rem", transition: "color .25s" }}>Admin</div>
+                      <div style={{ fontSize: ".72rem", color: "#8a8a7e" }}>Akses penuh ke panel administrasi</div>
+                    </div>
+                  </div>
+                  <button style={{ flexShrink: 0, padding: ".5rem 1rem", fontSize: ".62rem", letterSpacing: ".15em", textTransform: "uppercase", background: loginPageView === "admin" ? "rgba(96,221,96,.15)" : "transparent", border: `1px solid ${loginPageView === "admin" ? "rgba(96,221,96,.4)" : "rgba(138,138,126,.35)"}`, color: loginPageView === "admin" ? "#60dd60" : "#8a8a7e", cursor: "pointer", transition: "all .2s" }}
+                    onClick={() => { setLoginPageView(loginPageView === "admin" ? null : "admin"); setAuthTab("login"); setAuthError(""); setAuthForm({ name: "", email: "", password: "" }); }}>
+                    {loginPageView === "admin" ? "Tutup ×" : "Login Admin →"}
+                  </button>
+                </div>
+
+                {/* Inline admin login form */}
+                {loginPageView === "admin" && (
+                  <div style={{ padding: "0 1.5rem 1.5rem", borderTop: "1px solid rgba(96,221,96,.1)", paddingTop: "1.25rem" }}>
+                    <div style={{ fontSize: ".58rem", letterSpacing: ".25em", textTransform: "uppercase", color: "#60dd60", marginBottom: "1rem", display: "flex", alignItems: "center", gap: ".6rem" }}>
+                      <span style={{ display: "inline-block", width: 24, height: 1, background: "#60dd60", opacity: .4 }} />
+                      Portal Admin
+                      <span style={{ display: "inline-block", width: 24, height: 1, background: "#60dd60", opacity: .4 }} />
+                    </div>
+
+                    {authError && (
+                      <div style={{ marginBottom: "1rem", padding: ".65rem .9rem", borderLeft: "2px solid #c05050", background: "rgba(139,46,46,.1)", fontSize: ".78rem", color: "#d06060" }}>{authError}</div>
+                    )}
+
+                    <div style={{ display: "flex", flexDirection: "column", gap: ".9rem" }}>
+                      <div>
+                        <label style={{ display: "block", fontSize: ".58rem", letterSpacing: ".2em", textTransform: "uppercase", color: "#8a8a7e", marginBottom: ".35rem" }}>Email Admin *</label>
+                        <input className="input-noir" type="email" placeholder="admin@noircoffee.id" value={authForm.email} onChange={e => setAuthForm(f => ({ ...f, email: e.target.value }))} onKeyDown={e => e.key === "Enter" && handleAuthSubmit()}
+                          style={{ borderColor: "rgba(96,221,96,.2)" }} />
+                      </div>
+                      <div>
+                        <label style={{ display: "block", fontSize: ".58rem", letterSpacing: ".2em", textTransform: "uppercase", color: "#8a8a7e", marginBottom: ".35rem" }}>Password *</label>
+                        <input className="input-noir" type="password" placeholder="••••••••" value={authForm.password} onChange={e => setAuthForm(f => ({ ...f, password: e.target.value }))} onKeyDown={e => e.key === "Enter" && handleAuthSubmit()}
+                          style={{ borderColor: "rgba(96,221,96,.2)" }} />
+                      </div>
+                    </div>
+
+                    <button style={{ width: "100%", marginTop: "1.25rem", padding: ".7rem", fontSize: ".68rem", letterSpacing: ".2em", textTransform: "uppercase", background: authLoading ? "rgba(96,221,96,.08)" : "rgba(96,221,96,.12)", border: "1px solid rgba(96,221,96,.35)", color: authLoading ? "#4a8a4a" : "#60dd60", cursor: authLoading ? "not-allowed" : "pointer", transition: "all .2s", fontFamily: "inherit" }}
+                      onMouseOver={e => { if (!authLoading) e.currentTarget.style.background = "rgba(96,221,96,.2)"; }}
+                      onMouseOut={e => { if (!authLoading) e.currentTarget.style.background = "rgba(96,221,96,.12)"; }}
+                      onClick={handleAuthSubmit} disabled={authLoading}>
+                      {authLoading ? "Memverifikasi..." : "Masuk sebagai Admin"}
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Footer note */}
+            <p style={{ textAlign: "center", fontSize: ".65rem", color: "#4a4a42", letterSpacing: ".1em", lineHeight: 1.8 }}>
+              Semua akses aman & terenkripsi.<br />
+              <span style={{ color: "#8a8a7e" }}>Tidak memiliki akun?</span>{" "}
+              <button onClick={() => { setLoginPageView("user"); setAuthTab("register"); setAuthError(""); setAuthForm({ name: "", email: "", password: "" }); }} style={{ background: "none", border: "none", color: "#c8a96e40", cursor: "pointer", fontSize: ".65rem", letterSpacing: ".1em", textDecoration: "underline", color: "#6a6a5e" }}>Daftar gratis</button>
+              {" "}atau{" "}
+              <button onClick={() => setPage(PAGES.MENU)} style={{ background: "none", border: "none", color: "#6a6a5e", cursor: "pointer", fontSize: ".65rem", letterSpacing: ".1em", textDecoration: "underline" }}>lanjutkan sebagai tamu</button>
+            </p>
           </div>
         </div>
       )}
