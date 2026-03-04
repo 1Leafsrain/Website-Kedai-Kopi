@@ -105,6 +105,12 @@ export default function App() {
   const [galleryDeleteId, setGalleryDeleteId] = useState(null);
   const [navOpen, setNavOpen] = useState(false);
 
+  // ─── Google Analytics ────────────────────────────────────────────────────
+  const [gaId, setGaId] = useState(() => localStorage.getItem("nc_ga_id") || "");
+  const [gaIdInput, setGaIdInput] = useState(() => localStorage.getItem("nc_ga_id") || "");
+  const [gaEvents, setGaEvents] = useState(() => { try { return JSON.parse(sessionStorage.getItem("nc_ga_events") || "[]"); } catch { return []; } });
+  const [gaLoaded, setGaLoaded] = useState(false);
+
   useEffect(() => {
     if (lightbox === null) return;
     const filtered = galleryCat === "all" ? galleryPhotos : galleryPhotos.filter(p => p.cat === galleryCat);
@@ -312,7 +318,11 @@ export default function App() {
   useEffect(() => {
     if (page === "admin") { fetchOrders(); fetchStats(); fetchTables(); fetchUserList(); fetchGallery(); setAdminView("dashboard"); setReportData(null); }
     if (page === "history" && currentUser) { fetchMyOrders(); setHistoryExpandedId(null); }
+    logGaEvent("page_view", { page_name: page, page_location: typeof window !== "undefined" ? window.location.href : "/" });
   }, [page]);
+
+  // Load GA on mount if ID already saved
+  useEffect(() => { if (gaId) loadGA(gaId); }, []);
 
   // Poll tables every 10s to keep status fresh
   useEffect(() => {
@@ -331,6 +341,7 @@ export default function App() {
       if (ex) return prev.map(i => i.id === item.id ? { ...i, qty: i.qty + 1 } : i);
       return [...prev, { ...item, qty: 1 }];
     });
+    logGaEvent("add_to_cart", { currency: "IDR", value: Number(item.price), items: [{ item_id: String(item.id), item_name: item.name, item_category: item.category || "", price: Number(item.price), quantity: 1 }] });
     showToast(`${item.name} ditambahkan`);
     setCartOpen(true);
   };
@@ -426,6 +437,46 @@ export default function App() {
     } catch { showToast("Gagal membebaskan meja"); }
   };
 
+  // ─── GA4 Helpers ───────────────────────────────────────────────────────
+  const loadGA = (id) => {
+    if (!id || !/^G-/i.test(id)) return;
+    if (document.getElementById("ga-script")) { setGaLoaded(true); return; }
+    window.dataLayer = window.dataLayer || [];
+    window.gtag = function () { window.dataLayer.push(arguments); };
+    window.gtag("js", new Date());
+    window.gtag("config", id, { send_page_view: false });
+    const s = document.createElement("script");
+    s.id = "ga-script";
+    s.async = true;
+    s.src = `https://www.googletagmanager.com/gtag/js?id=${id}`;
+    document.head.appendChild(s);
+    setGaLoaded(true);
+  };
+
+  const logGaEvent = (event_name, params = {}) => {
+    const entry = { event_name, params, ts: new Date().toISOString(), eid: Date.now() + Math.random() };
+    setGaEvents(prev => {
+      const next = [entry, ...prev].slice(0, 200);
+      try { sessionStorage.setItem("nc_ga_events", JSON.stringify(next)); } catch {}
+      return next;
+    });
+    if (typeof window.gtag === "function") window.gtag("event", event_name, params);
+  };
+
+  const saveGaId = () => {
+    const id = gaIdInput.trim();
+    localStorage.setItem("nc_ga_id", id);
+    setGaId(id);
+    if (id) { loadGA(id); logGaEvent("ga_configured", { measurement_id: id }); }
+    showToast(id ? "GA4 Measurement ID disimpan!" : "GA4 ID dihapus");
+  };
+
+  const clearGaEvents = () => {
+    setGaEvents([]);
+    try { sessionStorage.removeItem("nc_ga_events"); } catch {}
+    showToast("Log events dikosongkan");
+  };
+
   const submitOrder = async () => {
     if (!form.name.trim()) return showToast("Nama harus diisi!");
     if (form.type === "dine_in" && !form.table) return showToast("Pilih nomor meja terlebih dahulu!");
@@ -451,6 +502,15 @@ export default function App() {
       }
       setOrders(prev => [data, ...prev]);
       setLastOrder(data);
+      // ── GA: purchase / konversi order ────────────────────────────────
+      logGaEvent("purchase", {
+        transaction_id: data.order_number,
+        value: data.total,
+        currency: "IDR",
+        payment_method: form.payment,
+        order_type: form.type,
+        items: cart.map(i => ({ item_id: String(i.id), item_name: i.name, price: Number(i.price), quantity: i.qty }))
+      });
       setCart([]);
       setForm({ name: "", phone: "", type: "dine_in", table: "", payment: "cash", notes: "" });
       fetchTables();
@@ -1579,7 +1639,7 @@ export default function App() {
             {/* Sidebar */}
             <div className="admin-sidebar" style={{ background: "#1a1a16", borderRight: "1px solid rgba(138,138,126,.1)", padding: "2rem 0" }}>
               <div style={{ fontSize: ".6rem", letterSpacing: ".3em", textTransform: "uppercase", color: "#4a4a42", padding: "0 1.5rem", marginBottom: "1rem" }}>Manajemen</div>
-              {[{ icon: "⬡", label: "Dashboard", view: "dashboard" }, { icon: "◈", label: "Pesanan", view: "pesanan" }, { icon: "◉", label: "Meja", view: "meja" }, { icon: "◎", label: "Produk", view: "produk" }, { icon: "◫", label: "Pengguna", view: "pengguna" }, { icon: "�", label: "Gallery", view: "gallery" }, { icon: "�📊", label: "Laporan", view: "laporan" }].map(({ icon, label, view }) => (
+              {[{ icon: "⬡", label: "Dashboard", view: "dashboard" }, { icon: "◈", label: "Pesanan", view: "pesanan" }, { icon: "◉", label: "Meja", view: "meja" }, { icon: "◎", label: "Produk", view: "produk" }, { icon: "◫", label: "Pengguna", view: "pengguna" }, { icon: "�", label: "Gallery", view: "gallery" }, { icon: "�📊", label: "Laporan", view: "laporan" }, { icon: "📈", label: "Analytics", view: "analytics" }].map(({ icon, label, view }) => (
                 <button key={label} onClick={() => { setAdminView(view); if (view === "laporan") { const d = new Date().toISOString().slice(0, 10); const f = { start: d, end: d }; setReportFilter(f); fetchReport(f); } }} style={{ background: "none", border: "none", borderLeft: `2px solid ${adminView === view ? "#c8a96e" : "transparent"}`, padding: ".65rem 1.5rem", display: "flex", gap: ".75rem", alignItems: "center", color: adminView === view ? "#c8a96e" : "#8a8a7e", fontSize: ".8rem", width: "100%", textAlign: "left", cursor: "pointer", transition: "color .2s, border-color .2s" }}>
                   {icon} {label}
                 </button>
@@ -2239,6 +2299,188 @@ export default function App() {
                   )}
                 </div>
               )}
+
+              {/* ── ANALYTICS VIEW ─────────────────────────────────────────── */}
+              {adminView === "analytics" && (() => {
+                const purchases = gaEvents.filter(e => e.event_name === "purchase");
+                const addCarts  = gaEvents.filter(e => e.event_name === "add_to_cart");
+                const convRate  = gaEvents.filter(e => e.event_name === "page_view").length > 0
+                  ? ((purchases.length / Math.max(gaEvents.filter(e => e.event_name === "page_view").length, 1)) * 100).toFixed(1)
+                  : "0.0";
+                const totalRevGA = purchases.reduce((s, e) => s + (Number(e.params?.value) || 0), 0);
+                const isValidId = /^G-[A-Z0-9]{4,}/i.test(gaId);
+                return (
+                  <div>
+                    {/* Header */}
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "2rem", flexWrap: "wrap", gap: "1rem" }}>
+                      <div>
+                        <div style={{ fontSize: ".65rem", letterSpacing: ".3em", textTransform: "uppercase", color: "#c8a96e", marginBottom: ".25rem" }}>Google Analytics 4</div>
+                        <div style={{ color: "#8a8a7e", fontSize: ".82rem" }}>Konfigurasi GA4, pantau konversi order & tracking events.</div>
+                      </div>
+                      <div style={{ display: "flex", gap: ".5rem", alignItems: "center" }}>
+                        <span style={{ fontSize: ".65rem", letterSpacing: ".12em", textTransform: "uppercase", padding: ".3rem .75rem", border: `1px solid ${isValidId && gaLoaded ? "rgba(96,221,96,.4)" : "rgba(200,169,110,.3)"}`, color: isValidId && gaLoaded ? "#60dd60" : "#8a8a7e", background: isValidId && gaLoaded ? "rgba(96,221,96,.07)" : "transparent" }}>
+                          {isValidId && gaLoaded ? "● Connected" : "○ Not Connected"}
+                        </span>
+                        {gaEvents.length > 0 && <button className="btn-outline" onClick={clearGaEvents} style={{ fontSize: ".7rem", padding: ".35rem .75rem" }}>Hapus Log</button>}
+                      </div>
+                    </div>
+
+                    {/* Config Card */}
+                    <div style={{ background: "#0a0a08", border: "1px solid rgba(138,138,126,.12)", padding: "1.75rem", marginBottom: "2rem" }}>
+                      <div style={{ fontSize: ".6rem", letterSpacing: ".25em", textTransform: "uppercase", color: "#8a8a7e", marginBottom: "1rem" }}>Konfigurasi Measurement ID</div>
+                      <div style={{ display: "flex", gap: ".75rem", flexWrap: "wrap", alignItems: "flex-end" }}>
+                        <div style={{ flex: 1, minWidth: 240 }}>
+                          <label style={{ display: "block", fontSize: ".65rem", color: "#8a8a7e", marginBottom: ".4rem", letterSpacing: ".1em" }}>Measurement ID (GA4)</label>
+                          <input
+                            className="input-noir"
+                            placeholder="G-XXXXXXXXXX"
+                            value={gaIdInput}
+                            onChange={e => setGaIdInput(e.target.value)}
+                            style={{ fontFamily: "monospace", letterSpacing: ".05em" }}
+                          />
+                        </div>
+                        <button className="btn-gold" onClick={saveGaId} style={{ flexShrink: 0 }}>Simpan & Muat</button>
+                        {gaId && <button className="btn-outline" onClick={() => { setGaIdInput(""); localStorage.removeItem("nc_ga_id"); setGaId(""); setGaLoaded(false); showToast("GA4 dihapus"); }} style={{ flexShrink: 0, fontSize: ".75rem" }}>Hapus</button>}
+                      </div>
+                      {gaId && !isValidId && <div style={{ marginTop: ".75rem", fontSize: ".72rem", color: "#c05050" }}>⚠ Format ID tidak valid. Harus diawali <code>G-</code></div>}
+                      {isValidId && <div style={{ marginTop: ".75rem", fontSize: ".72rem", color: "#8a8a7e" }}>Measurement ID aktif: <code style={{ color: "#c8a96e" }}>{gaId}</code>. Script GA4 dimuat otomatis saat halaman dibuka.</div>}
+                      {!gaId && <div style={{ marginTop: ".75rem", fontSize: ".72rem", color: "#4a4a42" }}>Daftarkan property di <a href="https://analytics.google.com" target="_blank" rel="noreferrer" style={{ color: "#c8a96e" }}>analytics.google.com</a> untuk mendapatkan Measurement ID.</div>}
+                    </div>
+
+                    {/* Stats Row */}
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(160px,1fr))", gap: 1, background: "rgba(138,138,126,.08)", marginBottom: "2rem" }}>
+                      {[
+                        { label: "Total Events", value: gaEvents.length, sub: "Sesi ini", icon: "⚡" },
+                        { label: "Konversi Order", value: purchases.length, sub: "purchase events", icon: "🎯" },
+                        { label: "Add to Cart", value: addCarts.length, sub: "add_to_cart events", icon: "🛒" },
+                        { label: "Nilai Konversi", value: "Rp " + totalRevGA.toLocaleString("id-ID"), sub: "Total tracked", icon: "💰" },
+                        { label: "Conv. Rate", value: convRate + "%", sub: "Konversi / page view", icon: "📈" },
+                      ].map(s => (
+                        <div key={s.label} className="stat-card" style={{ background: "#0a0a08", padding: "1.5rem 1.25rem" }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: ".5rem" }}>
+                            <div style={{ fontSize: ".58rem", letterSpacing: ".2em", textTransform: "uppercase", color: "#8a8a7e" }}>{s.label}</div>
+                            <span style={{ opacity: .35, fontSize: "1rem" }}>{s.icon}</span>
+                          </div>
+                          <div className="serif" style={{ fontSize: "1.5rem", color: "#c8a96e", lineHeight: 1 }}>{s.value}</div>
+                          <div style={{ fontSize: ".68rem", color: "#4a4a42", marginTop: ".3rem" }}>{s.sub}</div>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Conversions Table */}
+                    {purchases.length > 0 && (
+                      <div style={{ marginBottom: "2rem" }}>
+                        <div style={{ fontSize: ".65rem", letterSpacing: ".3em", textTransform: "uppercase", color: "#c8a96e", marginBottom: "1rem" }}>Log Konversi Order ({purchases.length})</div>
+                        <div style={{ overflowX: "auto" }}>
+                          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: ".78rem" }}>
+                            <thead>
+                              <tr>
+                                {["Waktu", "Order ID", "Tipe", "Pembayaran", "Nilai", "Items"].map(h => (
+                                  <th key={h} style={{ textAlign: "left", padding: ".55rem .85rem", fontSize: ".58rem", letterSpacing: ".18em", textTransform: "uppercase", color: "#8a8a7e", borderBottom: "1px solid rgba(138,138,126,.15)", fontWeight: 400 }}>{h}</th>
+                                ))}
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {purchases.map(ev => (
+                                <tr key={ev.eid}
+                                  onMouseOver={e => e.currentTarget.style.background = "rgba(200,169,110,.02)"}
+                                  onMouseOut={e => e.currentTarget.style.background = "none"}>
+                                  <td style={{ padding: ".65rem .85rem", borderBottom: "1px solid rgba(138,138,126,.07)", color: "#4a4a42", fontSize: ".7rem" }}>
+                                    {new Date(ev.ts).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+                                  </td>
+                                  <td style={{ padding: ".65rem .85rem", borderBottom: "1px solid rgba(138,138,126,.07)", color: "#c8a96e", fontFamily: "'Cormorant Garamond',serif" }}>{ev.params?.transaction_id || "-"}</td>
+                                  <td style={{ padding: ".65rem .85rem", borderBottom: "1px solid rgba(138,138,126,.07)", color: "#8a8a7e", textTransform: "capitalize" }}>{ev.params?.order_type?.replace("_", " ") || "-"}</td>
+                                  <td style={{ padding: ".65rem .85rem", borderBottom: "1px solid rgba(138,138,126,.07)", color: "#8a8a7e", textTransform: "capitalize" }}>{ev.params?.payment_method || "-"}</td>
+                                  <td style={{ padding: ".65rem .85rem", borderBottom: "1px solid rgba(138,138,126,.07)" }}>Rp {Number(ev.params?.value || 0).toLocaleString("id-ID")}</td>
+                                  <td style={{ padding: ".65rem .85rem", borderBottom: "1px solid rgba(138,138,126,.07)", color: "#4a4a42", fontSize: ".7rem" }}>{(ev.params?.items || []).length} item</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Full Event Log */}
+                    <div style={{ marginBottom: "2rem" }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
+                        <div style={{ fontSize: ".65rem", letterSpacing: ".3em", textTransform: "uppercase", color: "#c8a96e" }}>Event Log ({gaEvents.length})</div>
+                        <div style={{ fontSize: ".65rem", color: "#4a4a42" }}>Sesi saat ini · maks 200 events</div>
+                      </div>
+                      {gaEvents.length === 0 ? (
+                        <div style={{ textAlign: "center", padding: "3rem 2rem", color: "#4a4a42" }}>
+                          <div style={{ fontSize: "2rem", marginBottom: ".75rem", opacity: .3 }}>📭</div>
+                          <div style={{ fontSize: ".82rem" }}>Belum ada events. Coba tambahkan item ke keranjang atau lakukan order.</div>
+                        </div>
+                      ) : (
+                        <div style={{ overflowX: "auto" }}>
+                          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: ".75rem" }}>
+                            <thead>
+                              <tr>
+                                {["#", "Waktu", "Event", "Parameter Utama"].map(h => (
+                                  <th key={h} style={{ textAlign: "left", padding: ".5rem .85rem", fontSize: ".58rem", letterSpacing: ".18em", textTransform: "uppercase", color: "#8a8a7e", borderBottom: "1px solid rgba(138,138,126,.15)", fontWeight: 400 }}>{h}</th>
+                                ))}
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {gaEvents.map((ev, idx) => {
+                                const EVENT_COLOR = { purchase: "#60dd60", add_to_cart: "#c8a96e", page_view: "#6699cc", begin_checkout: "#aa88cc", ga_configured: "#88cc88" };
+                                const eColor = EVENT_COLOR[ev.event_name] || "#8a8a7e";
+                                const paramStr = ev.event_name === "purchase"
+                                  ? `${ev.params?.transaction_id} · Rp ${Number(ev.params?.value || 0).toLocaleString("id-ID")}`
+                                  : ev.event_name === "add_to_cart"
+                                  ? (ev.params?.items?.[0]?.item_name || "")
+                                  : ev.event_name === "page_view"
+                                  ? ev.params?.page_name || ""
+                                  : JSON.stringify(ev.params).slice(0, 60);
+                                return (
+                                  <tr key={ev.eid}
+                                    onMouseOver={e => e.currentTarget.style.background = "rgba(200,169,110,.02)"}
+                                    onMouseOut={e => e.currentTarget.style.background = "none"}>
+                                    <td style={{ padding: ".55rem .85rem", borderBottom: "1px solid rgba(138,138,126,.07)", color: "#4a4a42", fontSize: ".65rem" }}>{gaEvents.length - idx}</td>
+                                    <td style={{ padding: ".55rem .85rem", borderBottom: "1px solid rgba(138,138,126,.07)", color: "#4a4a42", fontSize: ".65rem", whiteSpace: "nowrap" }}>
+                                      {new Date(ev.ts).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+                                    </td>
+                                    <td style={{ padding: ".55rem .85rem", borderBottom: "1px solid rgba(138,138,126,.07)" }}>
+                                      <span style={{ border: `1px solid ${eColor}40`, color: eColor, padding: ".18rem .5rem", fontSize: ".58rem", letterSpacing: ".1em", fontFamily: "monospace" }}>{ev.event_name}</span>
+                                    </td>
+                                    <td style={{ padding: ".55rem .85rem", borderBottom: "1px solid rgba(138,138,126,.07)", color: "#8a8a7e", fontSize: ".72rem" }}>{paramStr}</td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Setup Guide */}
+                    <div style={{ background: "#0a0a08", border: "1px solid rgba(138,138,126,.12)", padding: "1.75rem" }}>
+                      <div style={{ fontSize: ".6rem", letterSpacing: ".25em", textTransform: "uppercase", color: "#8a8a7e", marginBottom: "1.25rem" }}>Panduan Setup GA4</div>
+                      <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
+                        {[
+                          { step: "01", title: "Buat Property GA4", desc: "Buka analytics.google.com → Admin → Create Property. Pilih platform Web." },
+                          { step: "02", title: "Salin Measurement ID", desc: 'Di Data Streams → Web → copy Measurement ID (format: G-XXXXXXXXXX).'},
+                          { step: "03", title: "Tempel di Kolom di Atas", desc: "Paste ID ke input di atas lalu klik Simpan & Muat. Script GA4 otomatis dimuat." },
+                          { step: "04", title: "Tandai Konversi", desc: "Di GA4 Dashboard → Events → Tandai \"purchase\" dan \"add_to_cart\" sebagai konversi." },
+                          { step: "05", title: "Verifikasi di Realtime", desc: "Buka GA4 Realtime Report untuk memastikan events masuk dengan benar." },
+                        ].map(({ step, title, desc }) => (
+                          <div key={step} style={{ display: "flex", gap: "1.25rem", alignItems: "flex-start" }}>
+                            <div style={{ flexShrink: 0, fontSize: ".6rem", letterSpacing: ".2em", color: "#c8a96e", marginTop: ".15rem", fontFamily: "monospace" }}>{step}</div>
+                            <div>
+                              <div style={{ fontSize: ".8rem", color: "#d0c8b4", marginBottom: ".25rem" }}>{title}</div>
+                              <div style={{ fontSize: ".72rem", color: "#8a8a7e", lineHeight: 1.6 }}>{desc}</div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                      <div style={{ marginTop: "1.5rem", paddingTop: "1rem", borderTop: "1px solid rgba(138,138,126,.1)", fontSize: ".65rem", color: "#4a4a42" }}>
+                        Events yang otomatis dilacak: <code style={{ color: "#8a8a7e" }}>purchase</code> (saat order berhasil), <code style={{ color: "#8a8a7e" }}>add_to_cart</code> (saat tambah item), <code style={{ color: "#8a8a7e" }}>page_view</code> (perpindahan halaman).
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
 
             </div>
           </div>
