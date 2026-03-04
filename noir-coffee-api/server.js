@@ -64,6 +64,54 @@ const generateOrderNumber = async () => {
     } catch (err) { console.error("Seed admin gagal:", err.message); }
 })();
 
+// Auto-create gallery_photos table
+(async () => {
+    try {
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS gallery_photos (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                title VARCHAR(120) NOT NULL,
+                description VARCHAR(255),
+                src_url TEXT NOT NULL,
+                thumb_url TEXT NOT NULL,
+                category VARCHAR(50) NOT NULL DEFAULT 'kopi',
+                is_tall TINYINT(1) NOT NULL DEFAULT 0,
+                sort_order INT NOT NULL DEFAULT 0,
+                created_at DATETIME DEFAULT NOW(),
+                updated_at DATETIME DEFAULT NOW() ON UPDATE NOW()
+            )
+        `);
+        const [[{ cnt }]] = await pool.query("SELECT COUNT(*) AS cnt FROM gallery_photos");
+        if (cnt === 0) {
+            const defaults = [
+                ["Espresso Ristretto", "Pekat, penuh karakter.", "https://images.unsplash.com/photo-1504630083234-14187a9df0f5?w=800&q=85&fit=crop", "https://images.unsplash.com/photo-1504630083234-14187a9df0f5?w=500&q=75&fit=crop", "kopi", 1, 1],
+                ["Latte Art", "Seni dalam cangkir.", "https://images.unsplash.com/photo-1461023058943-07fcbe16d735?w=800&q=85&fit=crop", "https://images.unsplash.com/photo-1461023058943-07fcbe16d735?w=500&q=75&fit=crop", "kopi", 0, 2],
+                ["Pour Over", "Ritual penyeduhan sempurna.", "https://images.unsplash.com/photo-1495474472287-4d71bcdd2085?w=800&q=85&fit=crop", "https://images.unsplash.com/photo-1495474472287-4d71bcdd2085?w=500&q=75&fit=crop", "kopi", 0, 3],
+                ["Black Coffee", "Murni, tanpa kompromi.", "https://images.unsplash.com/photo-1509042239860-f550ce710b93?w=800&q=85&fit=crop", "https://images.unsplash.com/photo-1509042239860-f550ce710b93?w=500&q=75&fit=crop", "kopi", 1, 4],
+                ["Cappuccino", "Keseimbangan espresso dan susu.", "https://images.unsplash.com/photo-1534040385115-33dcb3f65729?w=800&q=85&fit=crop", "https://images.unsplash.com/photo-1534040385115-33dcb3f65729?w=500&q=75&fit=crop", "kopi", 0, 5],
+                ["Es Kopi Susu", "Segar, manis, sempurna.", "https://images.unsplash.com/photo-1572442388796-11668a67e53d?w=800&q=85&fit=crop", "https://images.unsplash.com/photo-1572442388796-11668a67e53d?w=500&q=75&fit=crop", "minuman", 0, 6],
+                ["Fresh Juice", "Segar dari buah pilihan.", "https://images.unsplash.com/photo-1553361371-9b22f78e8b1d?w=800&q=85&fit=crop", "https://images.unsplash.com/photo-1553361371-9b22f78e8b1d?w=500&q=75&fit=crop", "minuman", 1, 7],
+                ["Teh Herbal", "Menenangkan jiwa raga.", "https://images.unsplash.com/photo-1576092768241-dec231879fc3?w=800&q=85&fit=crop", "https://images.unsplash.com/photo-1576092768241-dec231879fc3?w=500&q=75&fit=crop", "minuman", 0, 8],
+                ["Berry Smoothie", "Kaya antioksidan.", "https://images.unsplash.com/photo-1490474418585-ba9bad8fd0ea?w=800&q=85&fit=crop", "https://images.unsplash.com/photo-1490474418585-ba9bad8fd0ea?w=500&q=75&fit=crop", "minuman", 0, 9],
+                ["Brunch Platter", "Sajian pagi yang istimewa.", "https://images.unsplash.com/photo-1567620905732-2d1ec7ab7445?w=800&q=85&fit=crop", "https://images.unsplash.com/photo-1567620905732-2d1ec7ab7445?w=500&q=75&fit=crop", "makanan", 1, 10],
+                ["Avocado Toast", "Populer, lezat, bergizi.", "https://images.unsplash.com/photo-1551024709-8f23befc6f87?w=800&q=85&fit=crop", "https://images.unsplash.com/photo-1551024709-8f23befc6f87?w=500&q=75&fit=crop", "makanan", 0, 11],
+                ["Club Sandwich", "Berlapis, mengenyangkan.", "https://images.unsplash.com/photo-1528735602780-2552fd46c7af?w=800&q=85&fit=crop", "https://images.unsplash.com/photo-1528735602780-2552fd46c7af?w=500&q=75&fit=crop", "makanan", 0, 12],
+                ["Croissant Butter", "Renyah di luar, lembut di dalam.", "https://images.unsplash.com/photo-1555507036-ab1f4038808a?w=800&q=85&fit=crop", "https://images.unsplash.com/photo-1555507036-ab1f4038808a?w=500&q=75&fit=crop", "dessert", 0, 13],
+                ["Layer Cake", "Manis berlapis kebaikan.", "https://images.unsplash.com/photo-1565958011703-44f9829ba187?w=800&q=85&fit=crop", "https://images.unsplash.com/photo-1565958011703-44f9829ba187?w=500&q=75&fit=crop", "dessert", 1, 14],
+                ["Belgian Waffle", "Crispy dan hangat.", "https://images.unsplash.com/photo-1560715894-baea4c6c2bfd?w=800&q=85&fit=crop", "https://images.unsplash.com/photo-1560715894-baea4c6c2bfd?w=500&q=75&fit=crop", "dessert", 0, 15],
+                ["Cheesecake", "Creamy, lezat, memanjakan.", "https://images.unsplash.com/photo-1551024506-0bccd828d307?w=800&q=85&fit=crop", "https://images.unsplash.com/photo-1551024506-0bccd828d307?w=500&q=75&fit=crop", "dessert", 0, 16],
+                ["Interior Noir Coffee", "Ruang yang hangat dan nyaman.", "https://images.unsplash.com/photo-1554118811-1e0d58224f24?w=800&q=85&fit=crop", "https://images.unsplash.com/photo-1554118811-1e0d58224f24?w=500&q=75&fit=crop", "suasana", 0, 17],
+                ["Coffee Corner", "Sudut favorit pelanggan setia.", "https://images.unsplash.com/photo-1521017432531-fbd92d768814?w=800&q=85&fit=crop", "https://images.unsplash.com/photo-1521017432531-fbd92d768814?w=500&q=75&fit=crop", "suasana", 1, 18],
+                ["Table for Two", "Momen berkesan bersama orang terkasih.", "https://images.unsplash.com/photo-1445116572660-236099ec97a0?w=800&q=85&fit=crop", "https://images.unsplash.com/photo-1445116572660-236099ec97a0?w=500&q=75&fit=crop", "suasana", 0, 19],
+            ];
+            for (const [title, description, src_url, thumb_url, category, is_tall, sort_order] of defaults) {
+                await pool.query("INSERT INTO gallery_photos (title, description, src_url, thumb_url, category, is_tall, sort_order) VALUES (?,?,?,?,?,?,?)", [title, description, src_url, thumb_url, category, is_tall, sort_order]);
+            }
+            console.log("Seed gallery_photos (19 foto) selesai.");
+        }
+    } catch (err) { console.error("Gallery setup gagal:", err.message); }
+})();
+
 // AUTH
 app.post("/api/auth/register", async (req, res) => {
     try {
@@ -369,6 +417,51 @@ app.get("/api/reports/sales", authenticate, requireRole("admin"), async (req, re
         `, [start, end]);
 
         res.json({ summary, daily, topProducts, orders: ordersList, period: { start, end } });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// GALLERY
+app.get("/api/gallery", async (req, res) => {
+    try {
+        const [rows] = await pool.query("SELECT * FROM gallery_photos ORDER BY sort_order, id");
+        res.json(rows);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post("/api/gallery", authenticate, requireRole("admin"), async (req, res) => {
+    try {
+        const { title, description, src_url, thumb_url, category, is_tall, sort_order } = req.body;
+        if (!title || !src_url) return res.status(400).json({ error: "Judul dan URL gambar wajib diisi" });
+        const [result] = await pool.query(
+            "INSERT INTO gallery_photos (title, description, src_url, thumb_url, category, is_tall, sort_order) VALUES (?,?,?,?,?,?,?)",
+            [title.trim(), description || "", src_url.trim(), thumb_url?.trim() || src_url.trim(), category || "kopi", is_tall ? 1 : 0, sort_order || 0]
+        );
+        const [[photo]] = await pool.query("SELECT * FROM gallery_photos WHERE id = ?", [result.insertId]);
+        res.status(201).json(photo);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.put("/api/gallery/:id", authenticate, requireRole("admin"), async (req, res) => {
+    try {
+        const [[ex]] = await pool.query("SELECT * FROM gallery_photos WHERE id = ?", [req.params.id]);
+        if (!ex) return res.status(404).json({ error: "Foto tidak ditemukan" });
+        const { title, description, src_url, thumb_url, category, is_tall, sort_order } = req.body;
+        if (!title || !src_url) return res.status(400).json({ error: "Judul dan URL gambar wajib diisi" });
+        await pool.query(
+            "UPDATE gallery_photos SET title=?, description=?, src_url=?, thumb_url=?, category=?, is_tall=?, sort_order=?, updated_at=NOW() WHERE id=?",
+            [title.trim(), description || "", src_url.trim(), thumb_url?.trim() || src_url.trim(), category || "kopi", is_tall ? 1 : 0, sort_order || 0, req.params.id]
+        );
+        const [[photo]] = await pool.query("SELECT * FROM gallery_photos WHERE id = ?", [req.params.id]);
+        res.json(photo);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.delete("/api/gallery/:id", authenticate, requireRole("admin"), async (req, res) => {
+    try {
+        const [[photo]] = await pool.query("SELECT * FROM gallery_photos WHERE id = ?", [req.params.id]);
+        if (!photo) return res.status(404).json({ error: "Foto tidak ditemukan" });
+        await pool.query("DELETE FROM gallery_photos WHERE id = ?", [req.params.id]);
+        res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 

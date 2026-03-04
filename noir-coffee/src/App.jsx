@@ -17,7 +17,20 @@ const GrainBg = () => (
 );
 
 // --- Pages ---
-const PAGES = { LOGIN: "login", MENU: "menu", CART: "cart", CHECKOUT: "checkout", CONFIRM: "confirm", TRACK: "track", ADMIN: "admin", HISTORY: "history" };
+const PAGES = { LOGIN: "login", MENU: "menu", CART: "cart", CHECKOUT: "checkout", CONFIRM: "confirm", TRACK: "track", ADMIN: "admin", HISTORY: "history", GALLERY: "gallery" };
+
+// --- Gallery Categories ---
+const GALLERY_CATS = [
+  { key: "all", label: "Semua" },
+  { key: "kopi", label: "Kopi" },
+  { key: "minuman", label: "Minuman" },
+  { key: "makanan", label: "Makanan" },
+  { key: "dessert", label: "Dessert" },
+  { key: "suasana", label: "Suasana" },
+];
+const GALLERY_CAT_KEYS = ["kopi", "minuman", "makanan", "dessert", "suasana"];
+// Helper: map DB row → gallery photo shape
+const mapPhoto = (r) => ({ id: r.id, src: r.src_url, thumb: r.thumb_url, title: r.title, desc: r.description, cat: r.category, tall: r.is_tall === 1, sort_order: r.sort_order });
 
 const ROLE_LABEL = { guest: "Tamu", user: "Pengguna", admin: "Admin" };
 const ROLE_COLOR = { guest: "#8a8a7e", user: "#c8a96e", admin: "#60dd60" };
@@ -76,6 +89,32 @@ export default function App() {
   const [myOrders, setMyOrders] = useState([]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyExpandedId, setHistoryExpandedId] = useState(null);
+
+  // ─── Gallery (public) ─────────────────────────────────────────────────────
+  const [galleryPhotos, setGalleryPhotos] = useState([]);
+  const [galleryLoading, setGalleryLoading] = useState(true);
+  const [galleryCat, setGalleryCat] = useState("all");
+  const [lightbox, setLightbox] = useState(null);
+
+  // ─── Gallery Admin CRUD ─────────────────────────────────────────────────
+  const [galleryFormOpen, setGalleryFormOpen] = useState(false);
+  const [editingGallery, setEditingGallery] = useState(null);
+  const [galleryForm, setGalleryForm] = useState({ title: "", description: "", src_url: "", thumb_url: "", category: "kopi", is_tall: false, sort_order: 0 });
+  const [galleryFormError, setGalleryFormError] = useState("");
+  const [galleryFormLoading, setGalleryFormLoading] = useState(false);
+  const [galleryDeleteId, setGalleryDeleteId] = useState(null);
+
+  useEffect(() => {
+    if (lightbox === null) return;
+    const filtered = galleryCat === "all" ? galleryPhotos : galleryPhotos.filter(p => p.cat === galleryCat);
+    const handleKey = (e) => {
+      if (e.key === "Escape") setLightbox(null);
+      if (e.key === "ArrowLeft") setLightbox(i => (i - 1 + filtered.length) % filtered.length);
+      if (e.key === "ArrowRight") setLightbox(i => (i + 1) % filtered.length);
+    };
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  }, [lightbox, galleryCat, galleryPhotos]);
 
   // ─── Auth helpers ────────────────────────────────────────────────────────
   const authHeaders = (token) => ({
@@ -195,11 +234,65 @@ export default function App() {
     finally { setHistoryLoading(false); }
   };
 
+  const fetchGallery = async () => {
+    setGalleryLoading(true);
+    try {
+      const res = await fetch("/api/gallery");
+      const data = await res.json();
+      setGalleryPhotos(Array.isArray(data) ? data.map(mapPhoto) : []);
+    } catch { setGalleryPhotos([]); }
+    finally { setGalleryLoading(false); }
+  };
+
+  const openAddGallery = () => {
+    setEditingGallery(null);
+    setGalleryForm({ title: "", description: "", src_url: "", thumb_url: "", category: "kopi", is_tall: false, sort_order: galleryPhotos.length + 1 });
+    setGalleryFormError("");
+    setGalleryFormOpen(true);
+  };
+
+  const openEditGallery = (photo) => {
+    setEditingGallery(photo);
+    setGalleryForm({ title: photo.title, description: photo.desc || "", src_url: photo.src, thumb_url: photo.thumb, category: photo.cat, is_tall: photo.tall, sort_order: photo.sort_order || 0 });
+    setGalleryFormError("");
+    setGalleryFormOpen(true);
+  };
+
+  const saveGallery = async () => {
+    if (!galleryForm.title.trim()) return setGalleryFormError("Judul wajib diisi");
+    if (!galleryForm.src_url.trim()) return setGalleryFormError("URL gambar wajib diisi");
+    setGalleryFormError("");
+    setGalleryFormLoading(true);
+    try {
+      const body = { ...galleryForm, thumb_url: galleryForm.thumb_url.trim() || galleryForm.src_url.trim() };
+      const method = editingGallery ? "PUT" : "POST";
+      const url = editingGallery ? `/api/gallery/${editingGallery.id}` : "/api/gallery";
+      const res = await fetch(url, { method, headers: authHeaders(authToken), body: JSON.stringify(body) });
+      const data = await res.json();
+      if (!res.ok) return setGalleryFormError(data.error || "Gagal menyimpan");
+      setGalleryFormOpen(false);
+      await fetchGallery();
+      showToast(editingGallery ? "Foto diperbarui" : "Foto ditambahkan");
+    } catch { setGalleryFormError("Terjadi kesalahan"); }
+    finally { setGalleryFormLoading(false); }
+  };
+
+  const deleteGallery = async (id) => {
+    try {
+      const res = await fetch(`/api/gallery/${id}`, { method: "DELETE", headers: authHeaders(authToken) });
+      if (!res.ok) { const d = await res.json(); showToast(d.error || "Gagal hapus"); return; }
+      setGalleryDeleteId(null);
+      await fetchGallery();
+      showToast("Foto dihapus");
+    } catch { showToast("Gagal menghapus foto"); }
+  };
+
   useEffect(() => {
     setMounted(true);
     fetchCategories();
     fetchMenu();
     fetchTables();
+    fetchGallery();
     // Restore auth from localStorage
     const tk = localStorage.getItem("nc_token");
     const uc = localStorage.getItem("nc_user");
@@ -216,7 +309,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (page === "admin") { fetchOrders(); fetchStats(); fetchTables(); fetchUserList(); setAdminView("dashboard"); setReportData(null); }
+    if (page === "admin") { fetchOrders(); fetchStats(); fetchTables(); fetchUserList(); fetchGallery(); setAdminView("dashboard"); setReportData(null); }
     if (page === "history" && currentUser) { fetchMyOrders(); setHistoryExpandedId(null); }
   }, [page]);
 
@@ -491,6 +584,17 @@ export default function App() {
         }
         .menu-item-accent { border-left:2px solid rgba(200,169,110,.15); transition: border-color .25s; }
         .menu-item-accent:hover { border-left-color:#c8a96e !important; }
+        /* Gallery */
+        .gallery-grid { columns:3; column-gap:3px; }
+        .gallery-item { break-inside:avoid; margin-bottom:3px; position:relative; overflow:hidden; cursor:pointer; display:block; }
+        .gallery-item img { width:100%; display:block; transition:transform .45s ease,filter .45s ease; filter:brightness(.9) saturate(.85); }
+        .gallery-item:hover img { transform:scale(1.06); filter:brightness(1) saturate(1); }
+        .gallery-overlay { position:absolute; inset:0; background:linear-gradient(to top,rgba(0,0,0,.75) 0%,transparent 55%); opacity:0; transition:opacity .3s; display:flex; align-items:flex-end; padding:1.25rem; }
+        .gallery-item:hover .gallery-overlay { opacity:1; }
+        @keyframes lightboxIn { from{opacity:0;transform:scale(.96)} to{opacity:1;transform:scale(1)} }
+        .lightbox-img { animation:lightboxIn .25s ease; }
+        @media(max-width:768px) { .gallery-grid{ columns:2; } }
+        @media(max-width:480px) { .gallery-grid{ columns:1; } }
         @media (max-width:900px) {
           .admin-layout { grid-template-columns:1fr !important; min-height:auto !important; }
           .admin-sidebar { flex-direction:row !important; padding:.75rem 1rem !important; border-right:none !important; border-bottom:1px solid rgba(138,138,126,.1) !important; }
@@ -583,7 +687,7 @@ export default function App() {
             Noir <span style={{ color: "#c8a96e" }}>●</span> Coffee
           </button>
           <div style={{ display: "flex", gap: "2rem", alignItems: "center" }} className="nav-links">
-            {[{ label: "Menu", p: PAGES.MENU }, { label: "Lacak", p: PAGES.TRACK }].map(({ label, p }) => (
+            {[{ label: "Menu", p: PAGES.MENU }, { label: "Gallery", p: PAGES.GALLERY }, { label: "Lacak", p: PAGES.TRACK }].map(({ label, p }) => (
               <button key={p} onClick={() => setPage(p)} style={{ background: "none", border: "none", color: page === p ? "#c8a96e" : "#8a8a7e", fontSize: ".7rem", letterSpacing: ".2em", textTransform: "uppercase", transition: "color .2s" }}>{label}</button>
             ))}
             {currentUser && (
@@ -1017,6 +1121,103 @@ export default function App() {
         </div>
       )}
 
+      {/* ======================== GALLERY PAGE ======================== */}
+      {page === PAGES.GALLERY && (() => {
+        const filtered = galleryCat === "all" ? galleryPhotos : galleryPhotos.filter(p => p.cat === galleryCat);
+        const openLb = (idx) => setLightbox(idx);
+        const closeLb = () => setLightbox(null);
+        const prevLb = (e) => { e.stopPropagation(); setLightbox(i => (i - 1 + filtered.length) % filtered.length); };
+        const nextLb = (e) => { e.stopPropagation(); setLightbox(i => (i + 1) % filtered.length); };
+        return (
+          <div style={{ paddingTop: "4.5rem", minHeight: "100vh" }} className="fade-in">
+            {/* Page Header */}
+            <div style={{ padding: "4rem 3rem 2.5rem", borderBottom: "1px solid rgba(138,138,126,.1)" }}>
+              <div style={{ fontSize: ".65rem", letterSpacing: ".4em", textTransform: "uppercase", color: "#c8a96e", marginBottom: "1rem", display: "flex", alignItems: "center", gap: "1rem" }}>
+                <span style={{ display: "inline-block", width: 40, height: 1, background: "#c8a96e" }} />
+                Koleksi Foto
+              </div>
+              <h1 className="serif" style={{ fontSize: "clamp(2.5rem,6vw,4.5rem)", fontWeight: 300, letterSpacing: "-.02em", lineHeight: .95, marginBottom: "1.25rem" }}>
+                Gallery <em style={{ color: "#c8a96e" }}>Produk</em>
+              </h1>
+              <p style={{ color: "#8a8a7e", fontSize: ".88rem", maxWidth: 480, lineHeight: 1.8 }}>
+                Setiap sajian kami hadir dengan penuh perhatian — dari bahan pilihan hingga presentasi yang memanjakan mata.
+              </p>
+            </div>
+
+            {/* Category Filter */}
+            <div style={{ padding: "0 3rem", borderBottom: "1px solid rgba(138,138,126,.1)", display: "flex", gap: 0, overflowX: "auto" }}>
+              {GALLERY_CATS.map(cat => (
+                <button key={cat.key} onClick={() => setGalleryCat(cat.key)}
+                  style={{ background: "none", border: "none", borderBottom: `2px solid ${galleryCat === cat.key ? "#c8a96e" : "transparent"}`, color: galleryCat === cat.key ? "#c8a96e" : "#8a8a7e", padding: ".65rem 1.25rem", fontSize: ".7rem", letterSpacing: ".2em", textTransform: "uppercase", marginBottom: -1, whiteSpace: "nowrap", transition: "all .2s", cursor: "pointer" }}>
+                  {cat.label}
+                  <span style={{ marginLeft: ".4rem", fontSize: ".6rem", color: galleryCat === cat.key ? "#c8a96e" : "#4a4a42" }}>
+                    {cat.key === "all" ? galleryPhotos.length : galleryPhotos.filter(p => p.cat === cat.key).length}
+                  </span>
+                </button>
+              ))}
+            </div>
+
+            {/* Masonry Grid */}
+            <div style={{ padding: "3px 3rem 5rem" }}>
+              {galleryLoading ? (
+                <div style={{ textAlign: "center", padding: "5rem 0", color: "#4a4a42", fontSize: ".85rem", letterSpacing: ".15em" }}>Memuat gallery...</div>
+              ) : (
+                <div className="gallery-grid" style={{ marginTop: "3px" }}>
+                  {filtered.map((photo, idx) => (
+                    <div key={photo.id} className="gallery-item" onClick={() => openLb(idx)}>
+                      <img src={photo.thumb} alt={photo.title} loading="lazy"
+                        style={{ aspectRatio: photo.tall ? "3/4" : "4/3", width: "100%", objectFit: "cover" }} />
+                      <div className="gallery-overlay">
+                        <div>
+                          <div style={{ fontSize: ".6rem", letterSpacing: ".2em", textTransform: "uppercase", color: "rgba(200,169,110,.8)", marginBottom: ".3rem" }}>
+                            {GALLERY_CATS.find(c => c.key === photo.cat)?.label}
+                          </div>
+                          <div className="serif" style={{ fontSize: "1.15rem", color: "#f0ede6", lineHeight: 1.15 }}>{photo.title}</div>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {!galleryLoading && filtered.length === 0 && (
+                <div style={{ textAlign: "center", padding: "5rem 0", color: "#4a4a42" }}>
+                  <div style={{ fontSize: "2rem", marginBottom: "1rem", opacity: .3 }}>◉</div>
+                  <p style={{ fontSize: ".8rem", letterSpacing: ".15em" }}>Tidak ada foto ditemukan</p>
+                </div>
+              )}
+            </div>
+
+            {/* Lightbox */}
+            {lightbox !== null && (
+              <div onClick={closeLb}
+                style={{ position: "fixed", inset: 0, zIndex: 500, background: "rgba(0,0,0,.93)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <button onClick={closeLb}
+                  style={{ position: "absolute", top: "1.5rem", right: "1.5rem", background: "none", border: "1px solid rgba(200,169,110,.25)", color: "#c8a96e", width: 40, height: 40, fontSize: "1.2rem", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 501 }}>×</button>
+                <div style={{ position: "absolute", top: "1.75rem", left: "50%", transform: "translateX(-50%)", fontSize: ".65rem", letterSpacing: ".25em", color: "#8a8a7e" }}>
+                  {lightbox + 1} / {filtered.length}
+                </div>
+                <button onClick={prevLb}
+                  style={{ position: "absolute", left: "1.5rem", top: "50%", transform: "translateY(-50%)", background: "none", border: "1px solid rgba(200,169,110,.2)", color: "#c8a96e", width: 44, height: 44, fontSize: "1.2rem", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 501 }}>‹</button>
+                <button onClick={nextLb}
+                  style={{ position: "absolute", right: "1.5rem", top: "50%", transform: "translateY(-50%)", background: "none", border: "1px solid rgba(200,169,110,.2)", color: "#c8a96e", width: 44, height: 44, fontSize: "1.2rem", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 501 }}>›</button>
+                <div onClick={e => e.stopPropagation()} style={{ maxWidth: "88vw", maxHeight: "82vh", display: "flex", flexDirection: "column", alignItems: "center" }}>
+                  <img key={filtered[lightbox]?.id} src={filtered[lightbox]?.src} alt={filtered[lightbox]?.title}
+                    className="lightbox-img"
+                    style={{ maxWidth: "100%", maxHeight: "70vh", objectFit: "contain", display: "block", border: "1px solid rgba(200,169,110,.12)" }} />
+                  <div style={{ marginTop: "1.25rem", textAlign: "center" }}>
+                    <div style={{ fontSize: ".6rem", letterSpacing: ".25em", textTransform: "uppercase", color: "#c8a96e", marginBottom: ".4rem" }}>
+                      {GALLERY_CATS.find(c => c.key === filtered[lightbox]?.cat)?.label}
+                    </div>
+                    <div className="serif" style={{ fontSize: "1.5rem", color: "#f0ede6", marginBottom: ".3rem" }}>{filtered[lightbox]?.title}</div>
+                    <div style={{ fontSize: ".8rem", color: "#8a8a7e" }}>{filtered[lightbox]?.desc}</div>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      })()}
+
       {/* ======================== CHECKOUT PAGE ======================== */}
       {page === PAGES.CHECKOUT && (
         <div style={{ maxWidth: 600, margin: "0 auto", padding: "7rem 2rem 4rem" }} className="fade-in checkout-wrap">
@@ -1312,7 +1513,7 @@ export default function App() {
             {/* Sidebar */}
             <div className="admin-sidebar" style={{ background: "#1a1a16", borderRight: "1px solid rgba(138,138,126,.1)", padding: "2rem 0" }}>
               <div style={{ fontSize: ".6rem", letterSpacing: ".3em", textTransform: "uppercase", color: "#4a4a42", padding: "0 1.5rem", marginBottom: "1rem" }}>Manajemen</div>
-              {[{ icon: "⬡", label: "Dashboard", view: "dashboard" }, { icon: "◈", label: "Pesanan", view: "pesanan" }, { icon: "◉", label: "Meja", view: "meja" }, { icon: "◎", label: "Produk", view: "produk" }, { icon: "◫", label: "Pengguna", view: "pengguna" }, { icon: "📊", label: "Laporan", view: "laporan" }].map(({ icon, label, view }) => (
+              {[{ icon: "⬡", label: "Dashboard", view: "dashboard" }, { icon: "◈", label: "Pesanan", view: "pesanan" }, { icon: "◉", label: "Meja", view: "meja" }, { icon: "◎", label: "Produk", view: "produk" }, { icon: "◫", label: "Pengguna", view: "pengguna" }, { icon: "�", label: "Gallery", view: "gallery" }, { icon: "�📊", label: "Laporan", view: "laporan" }].map(({ icon, label, view }) => (
                 <button key={label} onClick={() => { setAdminView(view); if (view === "laporan") { const d = new Date().toISOString().slice(0, 10); const f = { start: d, end: d }; setReportFilter(f); fetchReport(f); } }} style={{ background: "none", border: "none", borderLeft: `2px solid ${adminView === view ? "#c8a96e" : "transparent"}`, padding: ".65rem 1.5rem", display: "flex", gap: ".75rem", alignItems: "center", color: adminView === view ? "#c8a96e" : "#8a8a7e", fontSize: ".8rem", width: "100%", textAlign: "left", cursor: "pointer", transition: "color .2s, border-color .2s" }}>
                   {icon} {label}
                 </button>
@@ -1629,6 +1830,158 @@ export default function App() {
                       </tbody>
                     </table>
                   </div>
+                </div>
+              )}
+
+              {/* ─── GALLERY VIEW ──────────────────────────────────────────── */}
+              {adminView === "gallery" && (
+                <div>
+                  {/* Gallery Form Modal */}
+                  {galleryFormOpen && (
+                    <div style={{ position: "fixed", inset: 0, zIndex: 500 }}>
+                      <div onClick={() => setGalleryFormOpen(false)} style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,.8)" }} />
+                      <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%,-50%)", background: "#1a1a16", border: "1px solid rgba(200,169,110,.2)", padding: "2.5rem", width: "min(520px,95vw)", maxHeight: "90vh", overflowY: "auto" }}>
+                        <h3 className="serif" style={{ fontSize: "1.5rem", marginBottom: "1.75rem" }}>
+                          {editingGallery ? "Edit Foto" : "Tambah Foto"}
+                        </h3>
+                        {galleryFormError && (
+                          <div style={{ marginBottom: "1rem", padding: ".7rem 1rem", borderLeft: "2px solid #c05050", background: "rgba(139,46,46,.1)", fontSize: ".8rem", color: "#d06060" }}>{galleryFormError}</div>
+                        )}
+                        <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
+                          <div>
+                            <label style={{ display: "block", fontSize: ".6rem", letterSpacing: ".2em", textTransform: "uppercase", color: "#8a8a7e", marginBottom: ".4rem" }}>Judul *</label>
+                            <input className="input-noir" placeholder="Nama foto / produk" value={galleryForm.title} onChange={e => setGalleryForm(f => ({ ...f, title: e.target.value }))} />
+                          </div>
+                          <div>
+                            <label style={{ display: "block", fontSize: ".6rem", letterSpacing: ".2em", textTransform: "uppercase", color: "#8a8a7e", marginBottom: ".4rem" }}>Deskripsi</label>
+                            <input className="input-noir" placeholder="Deskripsi singkat" value={galleryForm.description} onChange={e => setGalleryForm(f => ({ ...f, description: e.target.value }))} />
+                          </div>
+                          <div>
+                            <label style={{ display: "block", fontSize: ".6rem", letterSpacing: ".2em", textTransform: "uppercase", color: "#8a8a7e", marginBottom: ".4rem" }}>URL Gambar Utama *</label>
+                            <input className="input-noir" placeholder="https://..." value={galleryForm.src_url} onChange={e => setGalleryForm(f => ({ ...f, src_url: e.target.value }))} />
+                          </div>
+                          <div>
+                            <label style={{ display: "block", fontSize: ".6rem", letterSpacing: ".2em", textTransform: "uppercase", color: "#8a8a7e", marginBottom: ".4rem" }}>URL Thumbnail (opsional, default = URL di atas)</label>
+                            <input className="input-noir" placeholder="https://... (kosongkan jika sama)" value={galleryForm.thumb_url} onChange={e => setGalleryForm(f => ({ ...f, thumb_url: e.target.value }))} />
+                          </div>
+                          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "1rem" }}>
+                            <div style={{ gridColumn: "span 1" }}>
+                              <label style={{ display: "block", fontSize: ".6rem", letterSpacing: ".2em", textTransform: "uppercase", color: "#8a8a7e", marginBottom: ".4rem" }}>Kategori</label>
+                              <select className="input-noir" value={galleryForm.category} onChange={e => setGalleryForm(f => ({ ...f, category: e.target.value }))}>
+                                {GALLERY_CAT_KEYS.map(k => <option key={k} value={k} style={{ background: "#1a1a16" }}>{k.charAt(0).toUpperCase() + k.slice(1)}</option>)}
+                              </select>
+                            </div>
+                            <div>
+                              <label style={{ display: "block", fontSize: ".6rem", letterSpacing: ".2em", textTransform: "uppercase", color: "#8a8a7e", marginBottom: ".4rem" }}>Urutan</label>
+                              <input className="input-noir" type="number" min={0} placeholder="0" value={galleryForm.sort_order} onChange={e => setGalleryForm(f => ({ ...f, sort_order: Number(e.target.value) }))} />
+                            </div>
+                            <div style={{ display: "flex", flexDirection: "column", justifyContent: "flex-end" }}>
+                              <label style={{ display: "flex", alignItems: "center", gap: ".6rem", cursor: "pointer", paddingBottom: ".7rem" }}>
+                                <input type="checkbox" checked={!!galleryForm.is_tall} onChange={e => setGalleryForm(f => ({ ...f, is_tall: e.target.checked }))} style={{ accentColor: "#c8a96e", width: 16, height: 16 }} />
+                                <span style={{ fontSize: ".65rem", letterSpacing: ".15em", textTransform: "uppercase", color: "#8a8a7e" }}>Orientasi Tinggi (3:4)</span>
+                              </label>
+                            </div>
+                          </div>
+                          {/* Preview */}
+                          {galleryForm.thumb_url || galleryForm.src_url ? (
+                            <div>
+                              <div style={{ fontSize: ".6rem", letterSpacing: ".2em", textTransform: "uppercase", color: "#4a4a42", marginBottom: ".5rem" }}>Preview</div>
+                              <img src={galleryForm.thumb_url || galleryForm.src_url} alt="preview"
+                                style={{ maxHeight: 160, maxWidth: "100%", objectFit: "cover", border: "1px solid rgba(138,138,126,.2)" }}
+                                onError={e => { e.currentTarget.style.display = "none"; }} />
+                            </div>
+                          ) : null}
+                        </div>
+                        <div style={{ display: "flex", gap: ".75rem", marginTop: "2rem" }}>
+                          <button className="btn-outline" style={{ flex: 1 }} onClick={() => setGalleryFormOpen(false)}>Batal</button>
+                          <button className="btn-gold" style={{ flex: 1, opacity: galleryFormLoading ? .6 : 1 }} onClick={saveGallery} disabled={galleryFormLoading}>
+                            {galleryFormLoading ? "Menyimpan..." : (editingGallery ? "Simpan" : "Tambah")}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Delete Confirm */}
+                  {galleryDeleteId !== null && (
+                    <div style={{ position: "fixed", inset: 0, zIndex: 500 }}>
+                      <div onClick={() => setGalleryDeleteId(null)} style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,.8)" }} />
+                      <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%,-50%)", background: "#1a1a16", border: "1px solid rgba(192,80,80,.3)", padding: "2.5rem", width: "min(380px,90vw)", textAlign: "center" }}>
+                        <div style={{ fontSize: "2rem", marginBottom: "1rem" }}>🗑</div>
+                        <h3 className="serif" style={{ fontSize: "1.4rem", marginBottom: ".75rem" }}>Hapus Foto?</h3>
+                        <p style={{ color: "#8a8a7e", fontSize: ".85rem", marginBottom: "2rem" }}>Tindakan ini tidak dapat dibatalkan.</p>
+                        <div style={{ display: "flex", gap: ".75rem" }}>
+                          <button className="btn-outline" style={{ flex: 1 }} onClick={() => setGalleryDeleteId(null)}>Batal</button>
+                          <button style={{ flex: 1, background: "#c05050", border: "none", color: "#fff", padding: ".65rem", fontSize: ".7rem", letterSpacing: ".15em", textTransform: "uppercase", cursor: "pointer" }}
+                            onClick={() => deleteGallery(galleryDeleteId)}>Hapus</button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Header */}
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "2rem" }}>
+                    <div>
+                      <div style={{ fontSize: ".65rem", letterSpacing: ".3em", textTransform: "uppercase", color: "#c8a96e", marginBottom: ".25rem" }}>Manajemen Gallery</div>
+                      <div style={{ color: "#8a8a7e", fontSize: ".82rem" }}>{galleryPhotos.length} foto</div>
+                    </div>
+                    <div style={{ display: "flex", gap: ".75rem" }}>
+                      <button onClick={fetchGallery}
+                        style={{ background: "none", border: "1px solid rgba(138,138,126,.2)", color: "#8a8a7e", padding: ".5rem .9rem", fontSize: ".65rem", letterSpacing: ".15em", textTransform: "uppercase", transition: "all .2s" }}
+                        onMouseOver={e => e.currentTarget.style.borderColor = "rgba(200,169,110,.4)"}
+                        onMouseOut={e => e.currentTarget.style.borderColor = "rgba(138,138,126,.2)"}>↺ Refresh</button>
+                      <button className="btn-gold" onClick={openAddGallery}>+ Tambah Foto</button>
+                    </div>
+                  </div>
+
+                  {/* Photo Grid Table */}
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(220px,1fr))", gap: 1, background: "rgba(138,138,126,.08)" }}>
+                    {galleryPhotos.map(photo => (
+                      <div key={photo.id} style={{ background: "#0a0a08", position: "relative", overflow: "hidden", display: "flex", flexDirection: "column" }}>
+                        {/* Photo thumbnail */}
+                        <div style={{ position: "relative", aspectRatio: photo.tall ? "3/4" : "4/3", overflow: "hidden" }}>
+                          <img src={photo.thumb} alt={photo.title}
+                            style={{ width: "100%", height: "100%", objectFit: "cover", display: "block", filter: "brightness(.85)" }}
+                            onError={e => { e.currentTarget.style.display = "none"; }} />
+                          {/* Category badge */}
+                          <div style={{ position: "absolute", top: ".6rem", left: ".6rem", background: "rgba(10,10,8,.8)", border: "1px solid rgba(200,169,110,.3)", color: "#c8a96e", padding: ".2rem .5rem", fontSize: ".55rem", letterSpacing: ".15em", textTransform: "uppercase" }}>
+                            {GALLERY_CATS.find(c => c.key === photo.cat)?.label || photo.cat}
+                          </div>
+                          {photo.tall && (
+                            <div style={{ position: "absolute", top: ".6rem", right: ".6rem", background: "rgba(10,10,8,.7)", color: "#8a8a7e", padding: ".2rem .4rem", fontSize: ".5rem", letterSpacing: ".1em" }}>3:4</div>
+                          )}
+                        </div>
+                        {/* Info */}
+                        <div style={{ padding: ".85rem 1rem", flex: 1, display: "flex", flexDirection: "column", gap: ".35rem" }}>
+                          <div className="serif" style={{ fontSize: ".9rem", lineHeight: 1.2 }}>{photo.title}</div>
+                          {photo.desc && <div style={{ fontSize: ".7rem", color: "#8a8a7e", lineHeight: 1.5 }}>{photo.desc}</div>}
+                          <div style={{ fontSize: ".6rem", color: "#4a4a42", marginTop: "auto" }}>Urutan #{photo.sort_order || 0}</div>
+                        </div>
+                        {/* Actions */}
+                        <div style={{ padding: ".6rem 1rem .85rem", display: "flex", gap: ".5rem" }}>
+                          <button onClick={() => openEditGallery(photo)}
+                            style={{ flex: 1, background: "none", border: "1px solid rgba(138,138,126,.2)", color: "#8a8a7e", padding: ".35rem", fontSize: ".62rem", letterSpacing: ".1em", textTransform: "uppercase", cursor: "pointer", transition: "all .2s" }}
+                            onMouseOver={e => { e.currentTarget.style.borderColor = "rgba(200,169,110,.4)"; e.currentTarget.style.color = "#c8a96e"; }}
+                            onMouseOut={e => { e.currentTarget.style.borderColor = "rgba(138,138,126,.2)"; e.currentTarget.style.color = "#8a8a7e"; }}>
+                            ✏ Edit
+                          </button>
+                          <button onClick={() => setGalleryDeleteId(photo.id)}
+                            style={{ flex: 1, background: "none", border: "1px solid rgba(138,138,126,.2)", color: "#8a8a7e", padding: ".35rem", fontSize: ".62rem", letterSpacing: ".1em", textTransform: "uppercase", cursor: "pointer", transition: "all .2s" }}
+                            onMouseOver={e => { e.currentTarget.style.borderColor = "rgba(192,80,80,.4)"; e.currentTarget.style.color = "#c05050"; }}
+                            onMouseOut={e => { e.currentTarget.style.borderColor = "rgba(138,138,126,.2)"; e.currentTarget.style.color = "#8a8a7e"; }}>
+                            🗑 Hapus
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {galleryPhotos.length === 0 && !galleryLoading && (
+                    <div style={{ textAlign: "center", padding: "4rem 0", border: "1px dashed rgba(138,138,126,.2)", marginTop: "1px" }}>
+                      <div style={{ fontSize: "2.5rem", opacity: .2, marginBottom: "1rem" }}>🖼</div>
+                      <p style={{ color: "#4a4a42", fontSize: ".85rem" }}>Belum ada foto. Klik + Tambah Foto untuk mulai.</p>
+                    </div>
+                  )}
                 </div>
               )}
 
