@@ -313,5 +313,64 @@ app.get("/api/stats", authenticate, requireRole("admin"), async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// REPORTS (admin)
+app.get("/api/reports/sales", authenticate, requireRole("admin"), async (req, res) => {
+    try {
+        const today = new Date().toISOString().slice(0, 10);
+        const start = req.query.start_date || today;
+        const end = req.query.end_date || today;
+
+        // Summary
+        const [[summary]] = await pool.query(`
+            SELECT
+                COUNT(*) AS total_orders,
+                COALESCE(SUM(CASE WHEN status = 'completed' THEN total ELSE 0 END), 0) AS total_revenue,
+                COUNT(CASE WHEN status = 'completed' THEN 1 END) AS completed_orders,
+                COUNT(CASE WHEN status = 'cancelled' THEN 1 END) AS cancelled_orders,
+                COALESCE(AVG(CASE WHEN status = 'completed' THEN total END), 0) AS avg_order_value
+            FROM orders
+            WHERE DATE(created_at) BETWEEN ? AND ?
+        `, [start, end]);
+
+        // Daily breakdown
+        const [daily] = await pool.query(`
+            SELECT
+                DATE(created_at) AS date,
+                COUNT(*) AS total_orders,
+                COUNT(CASE WHEN status = 'completed' THEN 1 END) AS completed_orders,
+                COALESCE(SUM(CASE WHEN status = 'completed' THEN total ELSE 0 END), 0) AS revenue
+            FROM orders
+            WHERE DATE(created_at) BETWEEN ? AND ?
+            GROUP BY DATE(created_at)
+            ORDER BY DATE(created_at)
+        `, [start, end]);
+
+        // Top products
+        const [topProducts] = await pool.query(`
+            SELECT
+                oi.product_name,
+                SUM(oi.quantity) AS total_qty,
+                SUM(oi.subtotal) AS total_revenue
+            FROM order_items oi
+            JOIN orders o ON o.id = oi.order_id
+            WHERE DATE(o.created_at) BETWEEN ? AND ? AND o.status = 'completed'
+            GROUP BY oi.product_name
+            ORDER BY total_qty DESC
+            LIMIT 10
+        `, [start, end]);
+
+        // Orders list
+        const [ordersList] = await pool.query(`
+            SELECT id, order_number, customer_name, type, table_number, status, payment_method,
+                   subtotal, tax, total, created_at
+            FROM orders
+            WHERE DATE(created_at) BETWEEN ? AND ?
+            ORDER BY created_at DESC
+        `, [start, end]);
+
+        res.json({ summary, daily, topProducts, orders: ordersList, period: { start, end } });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => { console.log(`Noir Coffee API berjalan di http://localhost:${PORT}`); });

@@ -66,6 +66,12 @@ export default function App() {
   const [userForm, setUserForm] = useState({ name: "", email: "", password: "", role: "user" });
   const [userFormError, setUserFormError] = useState("");
 
+  // ─── Reports (admin) ─────────────────────────────────────────────────────
+  const todayStr = () => new Date().toISOString().slice(0, 10);
+  const [reportFilter, setReportFilter] = useState({ start: todayStr(), end: todayStr() });
+  const [reportData, setReportData] = useState(null);
+  const [reportLoading, setReportLoading] = useState(false);
+
   // ─── History (user) ──────────────────────────────────────────────────────
   const [myOrders, setMyOrders] = useState([]);
   const [historyLoading, setHistoryLoading] = useState(false);
@@ -210,7 +216,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (page === "admin") { fetchOrders(); fetchStats(); fetchTables(); fetchUserList(); setAdminView("dashboard"); }
+    if (page === "admin") { fetchOrders(); fetchStats(); fetchTables(); fetchUserList(); setAdminView("dashboard"); setReportData(null); }
     if (page === "history" && currentUser) { fetchMyOrders(); setHistoryExpandedId(null); }
   }, [page]);
 
@@ -399,6 +405,48 @@ export default function App() {
     } catch { showToast("Gagal menghapus pengguna"); }
   };
 
+  // ─── Reports ────────────────────────────────────────────────────────────
+  const fetchReport = async (filter = reportFilter) => {
+    setReportLoading(true);
+    try {
+      const res = await fetch(`/api/reports/sales?start_date=${filter.start}&end_date=${filter.end}`, { headers: authHeaders(authToken) });
+      if (!res.ok) throw new Error();
+      setReportData(await res.json());
+    } catch { showToast("Gagal memuat laporan"); }
+    finally { setReportLoading(false); }
+  };
+
+  const exportReportCSV = () => {
+    if (!reportData) return;
+    const rows = [
+      ["No. Pesanan", "Pelanggan", "Tipe", "Meja", "Status", "Metode Bayar", "Subtotal", "Pajak", "Total", "Waktu"],
+      ...reportData.orders.map(o => [
+        o.order_number,
+        o.customer_name,
+        o.type === "dine_in" ? "Dine In" : "Takeaway",
+        o.table_number || "-",
+        { pending: "Menunggu", confirmed: "Dikonfirmasi", preparing: "Diproses", ready: "Siap", completed: "Selesai", cancelled: "Dibatalkan" }[o.status] || o.status,
+        o.payment_method,
+        o.subtotal,
+        o.tax,
+        o.total,
+        new Date(o.created_at).toLocaleString("id-ID"),
+      ]),
+    ];
+    const csv = rows.map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(",")).join("\n");
+    const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `laporan-penjualan-${reportFilter.start}-${reportFilter.end}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const printReport = () => {
+    window.print();
+  };
+
   const filteredMenu = activeCat === "all" ? menu : menu.filter(m => m.category_slug === activeCat);
   const featured = menu.filter(m => m.is_featured === 1);
 
@@ -436,6 +484,11 @@ export default function App() {
         .tag-cat { display:inline-block; background:rgba(200,169,110,.06); color:#c8a96e; border:1px solid rgba(200,169,110,.18); padding:.15rem .55rem; font-size:.58rem; letter-spacing:.15em; text-transform:uppercase; }
         .stat-card { transition: transform .2s, border-color .2s; border:1px solid transparent !important; }
         .stat-card:hover { transform:translateY(-3px); border-color:rgba(200,169,110,.2) !important; }
+        @media print {
+          body > * { display:none !important; }
+          #report-print-area { display:block !important; position:fixed; inset:0; background:#fff; color:#000; padding:2rem; overflow:visible; }
+          #report-print-area * { color:#000 !important; border-color:#ccc !important; background:#fff !important; box-shadow:none !important; }
+        }
         .menu-item-accent { border-left:2px solid rgba(200,169,110,.15); transition: border-color .25s; }
         .menu-item-accent:hover { border-left-color:#c8a96e !important; }
         @media (max-width:900px) {
@@ -1259,8 +1312,8 @@ export default function App() {
             {/* Sidebar */}
             <div className="admin-sidebar" style={{ background: "#1a1a16", borderRight: "1px solid rgba(138,138,126,.1)", padding: "2rem 0" }}>
               <div style={{ fontSize: ".6rem", letterSpacing: ".3em", textTransform: "uppercase", color: "#4a4a42", padding: "0 1.5rem", marginBottom: "1rem" }}>Manajemen</div>
-              {[{ icon: "⬡", label: "Dashboard", view: "dashboard" }, { icon: "◈", label: "Pesanan", view: "pesanan" }, { icon: "◉", label: "Meja", view: "meja" }, { icon: "◎", label: "Produk", view: "produk" }, { icon: "◫", label: "Pengguna", view: "pengguna" }].map(({ icon, label, view }) => (
-                <button key={label} onClick={() => setAdminView(view)} style={{ background: "none", border: "none", borderLeft: `2px solid ${adminView === view ? "#c8a96e" : "transparent"}`, padding: ".65rem 1.5rem", display: "flex", gap: ".75rem", alignItems: "center", color: adminView === view ? "#c8a96e" : "#8a8a7e", fontSize: ".8rem", width: "100%", textAlign: "left", cursor: "pointer", transition: "color .2s, border-color .2s" }}>
+              {[{ icon: "⬡", label: "Dashboard", view: "dashboard" }, { icon: "◈", label: "Pesanan", view: "pesanan" }, { icon: "◉", label: "Meja", view: "meja" }, { icon: "◎", label: "Produk", view: "produk" }, { icon: "◫", label: "Pengguna", view: "pengguna" }, { icon: "📊", label: "Laporan", view: "laporan" }].map(({ icon, label, view }) => (
+                <button key={label} onClick={() => { setAdminView(view); if (view === "laporan") { const d = new Date().toISOString().slice(0,10); const f = { start: d, end: d }; setReportFilter(f); fetchReport(f); } }} style={{ background: "none", border: "none", borderLeft: `2px solid ${adminView === view ? "#c8a96e" : "transparent"}`, padding: ".65rem 1.5rem", display: "flex", gap: ".75rem", alignItems: "center", color: adminView === view ? "#c8a96e" : "#8a8a7e", fontSize: ".8rem", width: "100%", textAlign: "left", cursor: "pointer", transition: "color .2s, border-color .2s" }}>
                   {icon} {label}
                 </button>
               ))}
@@ -1576,6 +1629,195 @@ export default function App() {
                       </tbody>
                     </table>
                   </div>
+                </div>
+              )}
+
+              {/* ─── LAPORAN VIEW ──────────────────────────────────────────── */}
+              {adminView === "laporan" && (
+                <div id="report-print-area">
+                  {/* Header */}
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "2rem", flexWrap: "wrap", gap: "1rem" }}>
+                    <div>
+                      <div style={{ fontSize: ".65rem", letterSpacing: ".3em", textTransform: "uppercase", color: "#c8a96e", marginBottom: ".25rem" }}>Laporan Penjualan</div>
+                      <div style={{ color: "#8a8a7e", fontSize: ".82rem" }}>Filter rentang tanggal lalu ekspor ke CSV atau cetak</div>
+                    </div>
+                    <div style={{ display: "flex", gap: ".75rem", flexWrap: "wrap", alignItems: "center" }}>
+                      <div style={{ display: "flex", gap: ".5rem", alignItems: "center" }}>
+                        <input type="date" className="input-noir" style={{ width: "auto", padding: ".45rem .75rem", fontSize: ".78rem" }}
+                          value={reportFilter.start} onChange={e => setReportFilter(f => ({ ...f, start: e.target.value }))} />
+                        <span style={{ color: "#8a8a7e", fontSize: ".75rem" }}>s/d</span>
+                        <input type="date" className="input-noir" style={{ width: "auto", padding: ".45rem .75rem", fontSize: ".78rem" }}
+                          value={reportFilter.end} onChange={e => setReportFilter(f => ({ ...f, end: e.target.value }))} />
+                      </div>
+                      <button className="btn-gold" onClick={() => fetchReport()} disabled={reportLoading}>
+                        {reportLoading ? "Memuat..." : "Tampilkan"}
+                      </button>
+                      {reportData && (
+                        <>
+                          <button className="btn-outline" onClick={exportReportCSV}
+                            style={{ display: "flex", gap: ".4rem", alignItems: "center" }}>
+                            ⬇ CSV
+                          </button>
+                          <button className="btn-outline" onClick={printReport}
+                            style={{ display: "flex", gap: ".4rem", alignItems: "center" }}>
+                            🖨 Cetak
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Quick date presets */}
+                  <div style={{ display: "flex", gap: ".5rem", marginBottom: "2rem", flexWrap: "wrap" }}>
+                    {[
+                      { label: "Hari Ini", fn: () => { const d = todayStr(); return { start: d, end: d }; } },
+                      { label: "7 Hari", fn: () => { const e = new Date(); const s = new Date(e); s.setDate(s.getDate() - 6); return { start: s.toISOString().slice(0,10), end: e.toISOString().slice(0,10) }; } },
+                      { label: "30 Hari", fn: () => { const e = new Date(); const s = new Date(e); s.setDate(s.getDate() - 29); return { start: s.toISOString().slice(0,10), end: e.toISOString().slice(0,10) }; } },
+                      { label: "Bulan Ini", fn: () => { const n = new Date(); return { start: `${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,'0')}-01`, end: todayStr() }; } },
+                    ].map(({ label, fn }) => (
+                      <button key={label} onClick={() => { const f = fn(); setReportFilter(f); fetchReport(f); }}
+                        style={{ background: "none", border: "1px solid rgba(138,138,126,.2)", color: "#8a8a7e", padding: ".35rem .85rem", fontSize: ".65rem", letterSpacing: ".12em", textTransform: "uppercase", transition: "all .2s" }}
+                        onMouseOver={e => { e.currentTarget.style.borderColor = "rgba(200,169,110,.4)"; e.currentTarget.style.color = "#c8a96e"; }}
+                        onMouseOut={e => { e.currentTarget.style.borderColor = "rgba(138,138,126,.2)"; e.currentTarget.style.color = "#8a8a7e"; }}>
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+
+                  {!reportData && !reportLoading && (
+                    <div style={{ textAlign: "center", padding: "5rem 2rem", color: "#4a4a42" }}>
+                      <div style={{ fontSize: "3rem", marginBottom: "1rem", opacity: .3 }}>📊</div>
+                      <div style={{ fontSize: ".85rem" }}>Pilih rentang tanggal lalu klik <strong style={{ color: "#8a8a7e" }}>Tampilkan</strong></div>
+                    </div>
+                  )}
+
+                  {reportLoading && (
+                    <div style={{ textAlign: "center", padding: "5rem 2rem", color: "#8a8a7e", fontSize: ".85rem" }}>Memuat data laporan...</div>
+                  )}
+
+                  {reportData && !reportLoading && (
+                    <>
+                      {/* Summary Cards */}
+                      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(175px,1fr))", gap: 1, background: "rgba(138,138,126,.08)", marginBottom: "2.5rem" }}>
+                        {[
+                          { label: "Total Pesanan", value: reportData.summary.total_orders, icon: "📋" },
+                          { label: "Pendapatan", value: rp(reportData.summary.total_revenue), icon: "💰" },
+                          { label: "Pesanan Selesai", value: reportData.summary.completed_orders, icon: "✅" },
+                          { label: "Dibatalkan", value: reportData.summary.cancelled_orders, icon: "❌" },
+                          { label: "Rata-rata Nilai", value: rp(Math.round(reportData.summary.avg_order_value)), icon: "📈" },
+                        ].map(s => (
+                          <div key={s.label} className="stat-card" style={{ background: "#0a0a08", padding: "1.5rem 1.25rem" }}>
+                            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: ".5rem" }}>
+                              <div style={{ fontSize: ".6rem", letterSpacing: ".2em", textTransform: "uppercase", color: "#8a8a7e" }}>{s.label}</div>
+                              <span style={{ opacity: .35 }}>{s.icon}</span>
+                            </div>
+                            <div className="serif" style={{ fontSize: "1.7rem", color: "#c8a96e", lineHeight: 1 }}>{s.value}</div>
+                          </div>
+                        ))}
+                      </div>
+
+                      {/* Daily Breakdown */}
+                      {reportData.daily.length > 0 && (
+                        <div style={{ marginBottom: "2.5rem" }}>
+                          <div style={{ fontSize: ".65rem", letterSpacing: ".3em", textTransform: "uppercase", color: "#c8a96e", marginBottom: "1rem" }}>Penjualan Harian</div>
+                          {(() => {
+                            const maxRev = Math.max(...reportData.daily.map(d => Number(d.revenue)), 1);
+                            return (
+                              <div style={{ display: "flex", flexDirection: "column", gap: ".5rem" }}>
+                                {reportData.daily.map(d => (
+                                  <div key={d.date} style={{ display: "grid", gridTemplateColumns: "120px 1fr 140px", gap: "1rem", alignItems: "center" }}>
+                                    <div style={{ fontSize: ".78rem", color: "#8a8a7e" }}>
+                                      {new Date(d.date + "T00:00:00").toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric" })}
+                                    </div>
+                                    <div style={{ position: "relative", height: 20, background: "rgba(138,138,126,.08)" }}>
+                                      <div style={{ position: "absolute", left: 0, top: 0, height: "100%", width: `${(Number(d.revenue) / maxRev) * 100}%`, background: "rgba(200,169,110,.35)", transition: "width .4s" }} />
+                                    </div>
+                                    <div style={{ textAlign: "right", fontSize: ".78rem" }}>
+                                      <span style={{ color: "#c8a96e" }}>{rp(d.revenue)}</span>
+                                      <span style={{ color: "#4a4a42", marginLeft: ".5rem" }}>· {d.total_orders} order</span>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            );
+                          })()}
+                        </div>
+                      )}
+
+                      {/* Top Products */}
+                      {reportData.topProducts.length > 0 && (
+                        <div style={{ marginBottom: "2.5rem" }}>
+                          <div style={{ fontSize: ".65rem", letterSpacing: ".3em", textTransform: "uppercase", color: "#c8a96e", marginBottom: "1rem" }}>Produk Terlaris</div>
+                          <div style={{ overflowX: "auto" }}>
+                            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: ".8rem" }}>
+                              <thead>
+                                <tr>
+                                  {["Produk", "Qty Terjual", "Pendapatan"].map(h => (
+                                    <th key={h} style={{ textAlign: "left", padding: ".6rem 1rem", fontSize: ".6rem", letterSpacing: ".2em", textTransform: "uppercase", color: "#8a8a7e", borderBottom: "1px solid rgba(138,138,126,.15)", fontWeight: 400 }}>{h}</th>
+                                  ))}
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {reportData.topProducts.map((p, i) => (
+                                  <tr key={p.product_name}
+                                    onMouseOver={e => e.currentTarget.style.background = "rgba(200,169,110,.02)"}
+                                    onMouseOut={e => e.currentTarget.style.background = "none"}>
+                                    <td style={{ padding: ".7rem 1rem", borderBottom: "1px solid rgba(138,138,126,.07)", fontFamily: "'Cormorant Garamond',serif", fontSize: ".95rem" }}>
+                                      <span style={{ color: "#4a4a42", marginRight: ".5rem", fontSize: ".7rem" }}>#{i + 1}</span>
+                                      {p.product_name}
+                                    </td>
+                                    <td style={{ padding: ".7rem 1rem", borderBottom: "1px solid rgba(138,138,126,.07)", color: "#c8a96e" }}>{p.total_qty} pcs</td>
+                                    <td style={{ padding: ".7rem 1rem", borderBottom: "1px solid rgba(138,138,126,.07)", color: "#8a8a7e" }}>{rp(p.total_revenue)}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Orders Detail */}
+                      <div>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
+                          <div style={{ fontSize: ".65rem", letterSpacing: ".3em", textTransform: "uppercase", color: "#c8a96e" }}>Rincian Pesanan ({reportData.orders.length})</div>
+                        </div>
+                        <div style={{ overflowX: "auto" }}>
+                          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: ".78rem" }}>
+                            <thead>
+                              <tr>
+                                {["No. Pesanan", "Pelanggan", "Tipe", "Metode Bayar", "Status", "Total", "Waktu"].map(h => (
+                                  <th key={h} style={{ textAlign: "left", padding: ".6rem .85rem", fontSize: ".58rem", letterSpacing: ".18em", textTransform: "uppercase", color: "#8a8a7e", borderBottom: "1px solid rgba(138,138,126,.15)", fontWeight: 400 }}>{h}</th>
+                                ))}
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {reportData.orders.map(o => {
+                                const sLabel = { pending: "Menunggu", confirmed: "Dikonfirmasi", preparing: "Diproses", ready: "Siap", completed: "Selesai", cancelled: "Dibatalkan" };
+                                const sColor = { pending: "#c8a96e", confirmed: "#88cc88", preparing: "#ccaa44", ready: "#60dd60", completed: "#8a8a7e", cancelled: "#c05050" };
+                                return (
+                                  <tr key={o.order_number}
+                                    onMouseOver={e => e.currentTarget.style.background = "rgba(200,169,110,.02)"}
+                                    onMouseOut={e => e.currentTarget.style.background = "none"}>
+                                    <td style={{ padding: ".7rem .85rem", borderBottom: "1px solid rgba(138,138,126,.07)", color: "#c8a96e", fontFamily: "'Cormorant Garamond',serif" }}>{o.order_number}</td>
+                                    <td style={{ padding: ".7rem .85rem", borderBottom: "1px solid rgba(138,138,126,.07)" }}>{o.customer_name}</td>
+                                    <td style={{ padding: ".7rem .85rem", borderBottom: "1px solid rgba(138,138,126,.07)", color: "#8a8a7e" }}>{o.type === "dine_in" ? `Dine In${o.table_number ? " · " + o.table_number : ""}` : "Takeaway"}</td>
+                                    <td style={{ padding: ".7rem .85rem", borderBottom: "1px solid rgba(138,138,126,.07)", color: "#8a8a7e", textTransform: "capitalize" }}>{o.payment_method}</td>
+                                    <td style={{ padding: ".7rem .85rem", borderBottom: "1px solid rgba(138,138,126,.07)" }}>
+                                      <span style={{ border: `1px solid ${(sColor[o.status] || "#8a8a7e")}50`, color: sColor[o.status] || "#8a8a7e", padding: ".2rem .5rem", fontSize: ".58rem", letterSpacing: ".12em", textTransform: "uppercase" }}>{sLabel[o.status] || o.status}</span>
+                                    </td>
+                                    <td style={{ padding: ".7rem .85rem", borderBottom: "1px solid rgba(138,138,126,.07)" }}>{rp(o.total)}</td>
+                                    <td style={{ padding: ".7rem .85rem", borderBottom: "1px solid rgba(138,138,126,.07)", color: "#8a8a7e" }}>
+                                      {new Date(o.created_at).toLocaleString("id-ID", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    </>
+                  )}
                 </div>
               )}
 
