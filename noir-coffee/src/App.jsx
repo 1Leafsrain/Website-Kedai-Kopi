@@ -1313,7 +1313,7 @@ export default function App() {
             <div className="admin-sidebar" style={{ background: "#1a1a16", borderRight: "1px solid rgba(138,138,126,.1)", padding: "2rem 0" }}>
               <div style={{ fontSize: ".6rem", letterSpacing: ".3em", textTransform: "uppercase", color: "#4a4a42", padding: "0 1.5rem", marginBottom: "1rem" }}>Manajemen</div>
               {[{ icon: "⬡", label: "Dashboard", view: "dashboard" }, { icon: "◈", label: "Pesanan", view: "pesanan" }, { icon: "◉", label: "Meja", view: "meja" }, { icon: "◎", label: "Produk", view: "produk" }, { icon: "◫", label: "Pengguna", view: "pengguna" }, { icon: "📊", label: "Laporan", view: "laporan" }].map(({ icon, label, view }) => (
-                <button key={label} onClick={() => { setAdminView(view); if (view === "laporan") { const d = new Date().toISOString().slice(0,10); const f = { start: d, end: d }; setReportFilter(f); fetchReport(f); } }} style={{ background: "none", border: "none", borderLeft: `2px solid ${adminView === view ? "#c8a96e" : "transparent"}`, padding: ".65rem 1.5rem", display: "flex", gap: ".75rem", alignItems: "center", color: adminView === view ? "#c8a96e" : "#8a8a7e", fontSize: ".8rem", width: "100%", textAlign: "left", cursor: "pointer", transition: "color .2s, border-color .2s" }}>
+                <button key={label} onClick={() => { setAdminView(view); if (view === "laporan") { const d = new Date().toISOString().slice(0, 10); const f = { start: d, end: d }; setReportFilter(f); fetchReport(f); } }} style={{ background: "none", border: "none", borderLeft: `2px solid ${adminView === view ? "#c8a96e" : "transparent"}`, padding: ".65rem 1.5rem", display: "flex", gap: ".75rem", alignItems: "center", color: adminView === view ? "#c8a96e" : "#8a8a7e", fontSize: ".8rem", width: "100%", textAlign: "left", cursor: "pointer", transition: "color .2s, border-color .2s" }}>
                   {icon} {label}
                 </button>
               ))}
@@ -1671,9 +1671,9 @@ export default function App() {
                   <div style={{ display: "flex", gap: ".5rem", marginBottom: "2rem", flexWrap: "wrap" }}>
                     {[
                       { label: "Hari Ini", fn: () => { const d = todayStr(); return { start: d, end: d }; } },
-                      { label: "7 Hari", fn: () => { const e = new Date(); const s = new Date(e); s.setDate(s.getDate() - 6); return { start: s.toISOString().slice(0,10), end: e.toISOString().slice(0,10) }; } },
-                      { label: "30 Hari", fn: () => { const e = new Date(); const s = new Date(e); s.setDate(s.getDate() - 29); return { start: s.toISOString().slice(0,10), end: e.toISOString().slice(0,10) }; } },
-                      { label: "Bulan Ini", fn: () => { const n = new Date(); return { start: `${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,'0')}-01`, end: todayStr() }; } },
+                      { label: "7 Hari", fn: () => { const e = new Date(); const s = new Date(e); s.setDate(s.getDate() - 6); return { start: s.toISOString().slice(0, 10), end: e.toISOString().slice(0, 10) }; } },
+                      { label: "30 Hari", fn: () => { const e = new Date(); const s = new Date(e); s.setDate(s.getDate() - 29); return { start: s.toISOString().slice(0, 10), end: e.toISOString().slice(0, 10) }; } },
+                      { label: "Bulan Ini", fn: () => { const n = new Date(); return { start: `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, '0')}-01`, end: todayStr() }; } },
                     ].map(({ label, fn }) => (
                       <button key={label} onClick={() => { const f = fn(); setReportFilter(f); fetchReport(f); }}
                         style={{ background: "none", border: "1px solid rgba(138,138,126,.2)", color: "#8a8a7e", padding: ".35rem .85rem", fontSize: ".65rem", letterSpacing: ".12em", textTransform: "uppercase", transition: "all .2s" }}
