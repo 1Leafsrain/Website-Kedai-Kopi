@@ -103,6 +103,7 @@ export default function App() {
   const [galleryFormError, setGalleryFormError] = useState("");
   const [galleryFormLoading, setGalleryFormLoading] = useState(false);
   const [galleryDeleteId, setGalleryDeleteId] = useState(null);
+  const [navOpen, setNavOpen] = useState(false);
 
   useEffect(() => {
     if (lightbox === null) return;
@@ -564,11 +565,11 @@ export default function App() {
         .fade-in { animation: fadeIn .5s ease forwards; }
         .card-hover { transition: background .25s; }
         .card-hover:hover { background: #1a1a16 !important; }
-        .btn-gold { background:#c8a96e; color:#0a0a08; border:none; padding:.65rem 1.5rem; font-size:.7rem; letter-spacing:.2em; text-transform:uppercase; transition: background .2s; }
+        .btn-gold { background:#c8a96e; color:#0a0a08; border:none; padding:.65rem 1.5rem; font-size:.7rem; letter-spacing:.2em; text-transform:uppercase; transition: background .2s; min-height:44px; display:inline-flex; align-items:center; justify-content:center; gap:.4rem; }
         .btn-gold:hover { background:#a08a52; }
-        .btn-outline { background:transparent; border:1px solid rgba(200,169,110,.4); color:#c8a96e; padding:.65rem 1.5rem; font-size:.7rem; letter-spacing:.2em; text-transform:uppercase; transition: all .2s; }
+        .btn-outline { background:transparent; border:1px solid rgba(200,169,110,.4); color:#c8a96e; padding:.65rem 1.5rem; font-size:.7rem; letter-spacing:.2em; text-transform:uppercase; transition: all .2s; min-height:44px; display:inline-flex; align-items:center; justify-content:center; gap:.4rem; }
         .btn-outline:hover { background:rgba(200,169,110,.1); }
-        .input-noir { width:100%; background:#1a1a16; border:1px solid rgba(138,138,126,.2); color:#f0ede6; padding:.7rem 1rem; font-size:.9rem; outline:none; transition: border-color .2s; }
+        .input-noir { width:100%; background:#1a1a16; border:1px solid rgba(138,138,126,.2); color:#f0ede6; padding:.7rem 1rem; font-size:.9rem; outline:none; transition: border-color .2s; min-height:44px; }
         .input-noir:focus { border-color:#c8a96e; }
         .input-noir::placeholder { color:#4a4a42; }
         .card-lift { transition: transform .3s ease, background .25s !important; }
@@ -619,6 +620,22 @@ export default function App() {
           .featured-grid { grid-template-columns:1fr !important; }
           .stats-4 { grid-template-columns:1fr 1fr !important; }
           .stats-strip { grid-template-columns:1fr 1fr !important; }
+        }
+        /* ── Hamburger & Mobile Nav ── */
+        .hamburger-btn { display:none; flex-direction:column; gap:5px; background:none; border:none; padding:10px; cursor:pointer; min-width:44px; min-height:44px; align-items:center; justify-content:center; }
+        .hamburger-btn span { width:22px; height:1.5px; background:#f0ede6; display:block; transition:transform .3s,opacity .3s; }
+        .mobile-nav-right { display:none; }
+        .mobile-nav { position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(10,10,8,.98); z-index:98; flex-direction:column; padding:5rem 1.75rem 2rem; overflow-y:auto; display:none; }
+        .mobile-nav.open { display:flex; animation:fadeIn .22s ease; }
+        .mobile-nav-link { background:none; border:none; border-bottom:1px solid rgba(138,138,126,.08); color:#8a8a7e; font-size:.88rem; letter-spacing:.25em; text-transform:uppercase; font-family:inherit; cursor:pointer; padding:1.1rem 0; width:100%; text-align:left; min-height:52px; display:flex; align-items:center; transition:color .2s; }
+        .mobile-nav-link.active,.mobile-nav-link:hover { color:#c8a96e; }
+        @media (max-width:768px) {
+          .nav-links { display:none !important; }
+          .mobile-nav-right { display:flex !important; align-items:center; gap:.5rem; }
+          .hamburger-btn { display:flex !important; }
+          .hero-content { padding:5rem 1.25rem 3rem !important; }
+          .section-pad { padding:3rem 1.25rem !important; }
+          .menu-section-pad { padding:4rem 1.25rem !important; }
         }
       `}</style>
 
@@ -682,47 +699,96 @@ export default function App() {
 
       {/* Navbar */}
       {page !== PAGES.LOGIN && (
-        <nav style={{ position: "fixed", top: 0, left: 0, right: 0, zIndex: 100, padding: "1.1rem 2rem", display: "flex", alignItems: "center", justifyContent: "space-between", borderBottom: "1px solid rgba(200,169,110,.12)", background: "rgba(10,10,8,.92)", backdropFilter: "blur(12px)" }}>
-          <button onClick={() => setPage(currentUser || page !== PAGES.LOGIN ? PAGES.MENU : PAGES.LOGIN)} style={{ background: "none", border: "none", color: "#f0ede6", fontSize: "1.2rem", letterSpacing: ".25em", textTransform: "uppercase", fontFamily: "'Cormorant Garamond',serif", cursor: "pointer" }}>
-            Noir <span style={{ color: "#c8a96e" }}>●</span> Coffee
-          </button>
-          <div style={{ display: "flex", gap: "2rem", alignItems: "center" }} className="nav-links">
-            {[{ label: "Menu", p: PAGES.MENU }, { label: "Gallery", p: PAGES.GALLERY }, { label: "Lacak", p: PAGES.TRACK }].map(({ label, p }) => (
-              <button key={p} onClick={() => setPage(p)} style={{ background: "none", border: "none", color: page === p ? "#c8a96e" : "#8a8a7e", fontSize: ".7rem", letterSpacing: ".2em", textTransform: "uppercase", transition: "color .2s" }}>{label}</button>
+        <>
+          <nav style={{ position: "fixed", top: 0, left: 0, right: 0, zIndex: 100, padding: "1rem 1.5rem", display: "flex", alignItems: "center", justifyContent: "space-between", borderBottom: "1px solid rgba(200,169,110,.12)", background: "rgba(10,10,8,.92)", backdropFilter: "blur(12px)" }}>
+            {/* Logo */}
+            <button onClick={() => setPage(currentUser || page !== PAGES.LOGIN ? PAGES.MENU : PAGES.LOGIN)} style={{ background: "none", border: "none", color: "#f0ede6", fontSize: "1.15rem", letterSpacing: ".25em", textTransform: "uppercase", fontFamily: "'Cormorant Garamond',serif", cursor: "pointer", minHeight: 44, display: "flex", alignItems: "center" }}>
+              Noir <span style={{ color: "#c8a96e", margin: "0 .35rem" }}>●</span> Coffee
+            </button>
+            {/* Desktop nav-links */}
+            <div style={{ display: "flex", gap: "2rem", alignItems: "center" }} className="nav-links">
+              {[{ label: "Menu", p: PAGES.MENU }, { label: "Gallery", p: PAGES.GALLERY }, { label: "Lacak", p: PAGES.TRACK }].map(({ label, p }) => (
+                <button key={p} onClick={() => setPage(p)} style={{ background: "none", border: "none", color: page === p ? "#c8a96e" : "#8a8a7e", fontSize: ".7rem", letterSpacing: ".2em", textTransform: "uppercase", transition: "color .2s" }}>{label}</button>
+              ))}
+              {currentUser && (
+                <button onClick={() => setPage(PAGES.HISTORY)} style={{ background: "none", border: "none", color: page === PAGES.HISTORY ? "#c8a96e" : "#8a8a7e", fontSize: ".7rem", letterSpacing: ".2em", textTransform: "uppercase", transition: "color .2s" }}>Riwayat</button>
+              )}
+              {currentUser?.role === "admin" && (
+                <button onClick={() => setPage(PAGES.ADMIN)} style={{ background: "none", border: "none", color: page === PAGES.ADMIN ? "#c8a96e" : "#8a8a7e", fontSize: ".7rem", letterSpacing: ".2em", textTransform: "uppercase", transition: "color .2s" }}>Admin</button>
+              )}
+              {!currentUser ? (
+                <button onClick={() => { setAuthTab("login"); setAuthModal("login"); setAuthError(""); setAuthForm({ name: "", email: "", password: "" }); }}
+                  style={{ background: "none", border: "1px solid rgba(200,169,110,.35)", color: "#c8a96e", padding: ".45rem 1rem", fontSize: ".7rem", letterSpacing: ".15em", textTransform: "uppercase", minHeight: 44 }}>
+                  Masuk
+                </button>
+              ) : (
+                <div style={{ display: "flex", alignItems: "center", gap: ".75rem" }}>
+                  <span style={{ fontSize: ".65rem", letterSpacing: ".1em", color: ROLE_COLOR[currentUser.role] || "#c8a96e", border: `1px solid ${ROLE_COLOR[currentUser.role] || "#c8a96e"}50`, padding: ".2rem .5rem", textTransform: "uppercase" }}>
+                    {ROLE_LABEL[currentUser.role] || currentUser.role}
+                  </span>
+                  <span style={{ fontSize: ".8rem", color: "#f0ede6" }}>{currentUser.name}</span>
+                  <button onClick={logout} style={{ background: "none", border: "none", color: "#4a4a42", fontSize: ".7rem", letterSpacing: ".15em", textTransform: "uppercase", cursor: "pointer", transition: "color .2s" }}
+                    onMouseOver={e => e.currentTarget.style.color = "#c05050"} onMouseOut={e => e.currentTarget.style.color = "#4a4a42"}>
+                    Keluar
+                  </button>
+                </div>
+              )}
+              <button onClick={() => setCartOpen(true)} style={{ background: "none", border: "1px solid rgba(200,169,110,.35)", color: "#c8a96e", padding: ".45rem 1rem", display: "flex", alignItems: "center", gap: ".5rem", fontSize: ".7rem", letterSpacing: ".15em", textTransform: "uppercase", transition: "all .2s", minHeight: 44 }}
+                onMouseOver={e => e.currentTarget.style.background = "rgba(200,169,110,.1)"}
+                onMouseOut={e => e.currentTarget.style.background = "none"}>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M6 2L3 6v14a2 2 0 002 2h14a2 2 0 002-2V6l-3-4zM3 6h18M16 10a4 4 0 01-8 0" /></svg>
+                Keranjang
+                {cartCount > 0 && <span style={{ background: "#c8a96e", color: "#0a0a08", borderRadius: "50%", width: 18, height: 18, display: "flex", alignItems: "center", justifyContent: "center", fontSize: ".65rem", fontWeight: 500 }}>{cartCount}</span>}
+              </button>
+            </div>
+            {/* Mobile: cart + hamburger */}
+            <div className="mobile-nav-right">
+              <button onClick={() => setCartOpen(true)} style={{ background: "none", border: "1px solid rgba(200,169,110,.35)", color: "#c8a96e", display: "flex", alignItems: "center", justifyContent: "center", gap: ".4rem", padding: ".5rem .8rem", minHeight: 44, minWidth: 44, transition: "background .2s" }}
+                onMouseOver={e => e.currentTarget.style.background = "rgba(200,169,110,.1)"}
+                onMouseOut={e => e.currentTarget.style.background = "none"}>
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M6 2L3 6v14a2 2 0 002 2h14a2 2 0 002-2V6l-3-4zM3 6h18M16 10a4 4 0 01-8 0" /></svg>
+                {cartCount > 0 && <span style={{ background: "#c8a96e", color: "#0a0a08", borderRadius: "50%", width: 18, height: 18, display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: ".6rem", fontWeight: 600 }}>{cartCount}</span>}
+              </button>
+              <button className="hamburger-btn" onClick={() => setNavOpen(v => !v)} aria-label="Buka menu">
+                <span style={{ transform: navOpen ? "rotate(45deg) translate(4.5px, 4.5px)" : "none" }} />
+                <span style={{ opacity: navOpen ? 0 : 1, transform: navOpen ? "scaleX(0)" : "none" }} />
+                <span style={{ transform: navOpen ? "rotate(-45deg) translate(4.5px, -4.5px)" : "none" }} />
+              </button>
+            </div>
+          </nav>
+          {/* Mobile Nav Overlay */}
+          <div className={`mobile-nav${navOpen ? " open" : ""}`}>
+            <button onClick={() => setNavOpen(false)} style={{ position: "absolute", top: "1rem", right: "1.25rem", background: "none", border: "none", color: "#8a8a7e", fontSize: "1.75rem", lineHeight: 1, cursor: "pointer", minWidth: 44, minHeight: 44, display: "flex", alignItems: "center", justifyContent: "center" }}>×</button>
+            <div className="serif" style={{ fontSize: "1.3rem", color: "#c8a96e", letterSpacing: ".08em", marginBottom: "1.5rem" }}>Noir ● Coffee</div>
+            {[{ label: "Menu", p: PAGES.MENU }, { label: "Gallery", p: PAGES.GALLERY }, { label: "Lacak Pesanan", p: PAGES.TRACK }].map(({ label, p }) => (
+              <button key={p} className={`mobile-nav-link${page === p ? " active" : ""}`} onClick={() => { setPage(p); setNavOpen(false); }}>{label}</button>
             ))}
             {currentUser && (
-              <button onClick={() => setPage(PAGES.HISTORY)} style={{ background: "none", border: "none", color: page === PAGES.HISTORY ? "#c8a96e" : "#8a8a7e", fontSize: ".7rem", letterSpacing: ".2em", textTransform: "uppercase", transition: "color .2s" }}>Riwayat</button>
+              <button className={`mobile-nav-link${page === PAGES.HISTORY ? " active" : ""}`} onClick={() => { setPage(PAGES.HISTORY); setNavOpen(false); }}>Riwayat</button>
             )}
             {currentUser?.role === "admin" && (
-              <button onClick={() => setPage(PAGES.ADMIN)} style={{ background: "none", border: "none", color: page === PAGES.ADMIN ? "#c8a96e" : "#8a8a7e", fontSize: ".7rem", letterSpacing: ".2em", textTransform: "uppercase", transition: "color .2s" }}>Admin</button>
+              <button className={`mobile-nav-link${page === PAGES.ADMIN ? " active" : ""}`} onClick={() => { setPage(PAGES.ADMIN); setNavOpen(false); }}>Admin Panel</button>
             )}
-            {/* Auth */}
-            {!currentUser ? (
-              <button onClick={() => { setAuthTab("login"); setAuthModal("login"); setAuthError(""); setAuthForm({ name: "", email: "", password: "" }); }}
-                style={{ background: "none", border: "1px solid rgba(200,169,110,.35)", color: "#c8a96e", padding: ".45rem 1rem", fontSize: ".7rem", letterSpacing: ".15em", textTransform: "uppercase" }}>
-                Masuk
-              </button>
-            ) : (
-              <div style={{ display: "flex", alignItems: "center", gap: ".75rem" }}>
-                <span style={{ fontSize: ".65rem", letterSpacing: ".1em", color: ROLE_COLOR[currentUser.role] || "#c8a96e", border: `1px solid ${ROLE_COLOR[currentUser.role] || "#c8a96e"}50`, padding: ".2rem .5rem", textTransform: "uppercase" }}>
-                  {ROLE_LABEL[currentUser.role] || currentUser.role}
-                </span>
-                <span style={{ fontSize: ".8rem", color: "#f0ede6" }}>{currentUser.name}</span>
-                <button onClick={logout} style={{ background: "none", border: "none", color: "#4a4a42", fontSize: ".7rem", letterSpacing: ".15em", textTransform: "uppercase", cursor: "pointer", transition: "color .2s" }}
-                  onMouseOver={e => e.currentTarget.style.color = "#c05050"} onMouseOut={e => e.currentTarget.style.color = "#4a4a42"}>
-                  Keluar
+            <div style={{ marginTop: "2rem", display: "flex", flexDirection: "column", gap: ".75rem" }}>
+              {!currentUser ? (
+                <button className="btn-gold" style={{ width: "100%", padding: ".9rem 1.25rem", fontSize: ".78rem", minHeight: 52 }}
+                  onClick={() => { setAuthTab("login"); setAuthModal("login"); setAuthError(""); setAuthForm({ name: "", email: "", password: "" }); setNavOpen(false); }}>
+                  Masuk / Daftar
                 </button>
-              </div>
-            )}
-            <button onClick={() => setCartOpen(true)} style={{ background: "none", border: "1px solid rgba(200,169,110,.35)", color: "#c8a96e", padding: ".45rem 1rem", display: "flex", alignItems: "center", gap: ".5rem", fontSize: ".7rem", letterSpacing: ".15em", textTransform: "uppercase", transition: "all .2s" }}
-              onMouseOver={e => e.currentTarget.style.background = "rgba(200,169,110,.1)"}
-              onMouseOut={e => e.currentTarget.style.background = "none"}>
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M6 2L3 6v14a2 2 0 002 2h14a2 2 0 002-2V6l-3-4zM3 6h18M16 10a4 4 0 01-8 0" /></svg>
-              Keranjang
-              {cartCount > 0 && <span style={{ background: "#c8a96e", color: "#0a0a08", borderRadius: "50%", width: 18, height: 18, display: "flex", alignItems: "center", justifyContent: "center", fontSize: ".65rem", fontWeight: 500 }}>{cartCount}</span>}
-            </button>
+              ) : (
+                <>
+                  <div style={{ display: "flex", alignItems: "center", gap: ".75rem", padding: ".75rem 0", borderBottom: "1px solid rgba(138,138,126,.08)" }}>
+                    <span style={{ fontSize: ".65rem", letterSpacing: ".1em", color: ROLE_COLOR[currentUser.role] || "#c8a96e", border: `1px solid ${ROLE_COLOR[currentUser.role] || "#c8a96e"}50`, padding: ".2rem .5rem", textTransform: "uppercase" }}>{ROLE_LABEL[currentUser.role] || currentUser.role}</span>
+                    <span style={{ fontSize: ".85rem", color: "#f0ede6" }}>{currentUser.name}</span>
+                  </div>
+                  <button onClick={() => { logout(); setNavOpen(false); }} style={{ background: "none", border: "1px solid rgba(192,80,80,.3)", color: "#c05050", padding: ".9rem 1.25rem", fontSize: ".75rem", letterSpacing: ".18em", textTransform: "uppercase", fontFamily: "inherit", minHeight: 48, cursor: "pointer", width: "100%", textAlign: "left" }}>
+                    Keluar
+                  </button>
+                </>
+              )}
+            </div>
           </div>
-        </nav>
+        </>
       )}
 
       {/* Cart Sidebar */}
@@ -749,7 +815,7 @@ export default function App() {
                       {["−", item.qty, "+"].map((v, i) => i === 1 ? (
                         <span key={i} style={{ fontSize: ".85rem", minWidth: 20, textAlign: "center" }}>{v}</span>
                       ) : (
-                        <button key={i} onClick={() => updateQty(item.id, i === 0 ? -1 : 1)} style={{ width: 24, height: 24, background: "none", border: "1px solid rgba(138,138,126,.3)", color: "#f0ede6", display: "flex", alignItems: "center", justifyContent: "center", fontSize: ".9rem", transition: "border-color .2s" }}>{v}</button>
+                        <button key={i} onClick={() => updateQty(item.id, i === 0 ? -1 : 1)} style={{ width: 36, height: 36, background: "none", border: "1px solid rgba(138,138,126,.3)", color: "#f0ede6", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "1rem", transition: "border-color .2s" }}>{v}</button>
                       ))}
                     </div>
                   </div>
@@ -1034,7 +1100,7 @@ export default function App() {
                 <p style={{ color: "#8a8a7e", fontSize: ".78rem", lineHeight: 1.7, marginBottom: "1.5rem" }}>{item.description}</p>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                   <span style={{ color: "#c8a96e", fontSize: ".85rem" }}>{rp(item.price)}</span>
-                  <button onClick={() => addToCart(item)} style={{ background: "none", border: "1px solid rgba(200,169,110,.3)", color: "#c8a96e", width: 34, height: 34, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "1.1rem", transition: "all .2s" }}
+                  <button onClick={() => addToCart(item)} style={{ background: "none", border: "1px solid rgba(200,169,110,.3)", color: "#c8a96e", width: 44, height: 44, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "1.2rem", transition: "all .2s", flexShrink: 0 }}
                     onMouseOver={e => { e.currentTarget.style.background = "#c8a96e"; e.currentTarget.style.color = "#0a0a08"; }}
                     onMouseOut={e => { e.currentTarget.style.background = "none"; e.currentTarget.style.color = "#c8a96e"; }}>+</button>
                 </div>
@@ -1043,7 +1109,7 @@ export default function App() {
           </div>
 
           {/* Full Menu */}
-          <div style={{ padding: "5rem 3rem" }} id="menu-section">
+          <div style={{ padding: "5rem 3rem" }} id="menu-section" className="menu-section-pad">
             <div style={{ display: "flex", alignItems: "center", gap: "1.5rem", marginBottom: "2.5rem" }}>
               <span style={{ fontSize: ".65rem", letterSpacing: ".35em", textTransform: "uppercase", color: "#c8a96e" }}>Menu Lengkap</span>
               <div style={{ flex: 1, height: 1, background: "rgba(138,138,126,.2)" }} />
@@ -1078,7 +1144,7 @@ export default function App() {
                       <span style={{ fontSize: ".6rem", letterSpacing: ".15em", textTransform: "uppercase", color: "#4a4a42" }}>
                         {item.is_featured === 1 && "★ Featured · "}{item.category_name}
                       </span>
-                      <button onClick={() => addToCart(item)} style={{ background: "none", border: "none", color: "#8a8a7e", fontSize: ".7rem", letterSpacing: ".15em", textTransform: "uppercase", borderBottom: "1px solid transparent", transition: "all .2s", paddingBottom: ".1rem" }}
+                      <button onClick={() => addToCart(item)} style={{ background: "none", border: "none", color: "#8a8a7e", fontSize: ".7rem", letterSpacing: ".15em", textTransform: "uppercase", borderBottom: "1px solid transparent", transition: "all .2s", paddingBottom: ".1rem", minHeight: 44, display: "inline-flex", alignItems: "center" }}
                         onMouseOver={e => { e.currentTarget.style.color = "#c8a96e"; e.currentTarget.style.borderBottomColor = "rgba(200,169,110,.4)"; }}
                         onMouseOut={e => { e.currentTarget.style.color = "#8a8a7e"; e.currentTarget.style.borderBottomColor = "transparent"; }}>
                         + Pesan
