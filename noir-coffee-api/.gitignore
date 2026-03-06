@@ -1,0 +1,21 @@
+node_modules
+dist
+
+# SSL certificates — NEVER commit private keys
+certs/
+*.pem
+*.key
+*.crt
+
+# Environment variables — NEVER commit secrets
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db

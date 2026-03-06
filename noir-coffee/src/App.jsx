@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 
 const rp = (n) => "Rp " + Number(n).toLocaleString("id-ID");
 
@@ -17,7 +17,7 @@ const GrainBg = () => (
 );
 
 // --- Pages ---
-const PAGES = { LOGIN: "login", MENU: "menu", CART: "cart", CHECKOUT: "checkout", CONFIRM: "confirm", TRACK: "track", ADMIN: "admin", HISTORY: "history", GALLERY: "gallery" };
+const PAGES = { LOGIN: "login", MENU: "menu", CART: "cart", CHECKOUT: "checkout", CONFIRM: "confirm", TRACK: "track", ADMIN: "admin", HISTORY: "history", GALLERY: "gallery", PRIVACY: "privacy", TERMS: "terms", TAX: "tax" };
 
 // --- Gallery Categories ---
 const GALLERY_CATS = [
@@ -105,6 +105,10 @@ export default function App() {
   const [galleryDeleteId, setGalleryDeleteId] = useState(null);
   const [navOpen, setNavOpen] = useState(false);
 
+  // ─── CSRF token ──────────────────────────────────────────────────────────
+  const [csrfToken, setCsrfToken] = useState(null);
+  const csrfRef = useRef(null); // sync ref — always holds latest token for immediate use
+
   // ─── Google Analytics ────────────────────────────────────────────────────
   const [gaId, setGaId] = useState(() => localStorage.getItem("nc_ga_id") || "");
   const [gaIdInput, setGaIdInput] = useState(() => localStorage.getItem("nc_ga_id") || "");
@@ -129,6 +133,30 @@ export default function App() {
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
   });
 
+  // Returns headers with both JWT auth + CSRF token (for mutation requests).
+  // Reads from csrfRef (sync) so freshly-fetched tokens are visible immediately.
+  const secureHeaders = (token) => ({
+    "Content-Type": "application/json",
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    ...(csrfRef.current ? { "x-csrf-token": csrfRef.current } : {}),
+  });
+
+  // Fetch (or refresh) the CSRF token from the server.
+  // Returns the new token so callers can use it immediately without waiting for state.
+  const fetchCsrfToken = async () => {
+    try {
+      // credentials:'include' ensures the CSRF cookie travels with the request
+      const res = await fetch("/api/csrf-token", { credentials: "include" });
+      if (res.ok) {
+        const data = await res.json();
+        csrfRef.current = data.csrfToken; // sync update first
+        setCsrfToken(data.csrfToken);     // then trigger re-render
+        return data.csrfToken;
+      }
+    } catch { /* non-critical */ }
+    return null;
+  };
+
   const saveAuth = (user, token) => {
     localStorage.setItem("nc_token", token);
     localStorage.setItem("nc_user", JSON.stringify(user));
@@ -150,13 +178,24 @@ export default function App() {
 
   const handleAuthSubmit = async () => {
     setAuthError("");
+    // ─── Client-side validation ──────────────────────────────────────────
+    const emailRe = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+    if (authTab === "register" && (!authForm.name || authForm.name.trim().length < 2))
+      return setAuthError("Nama minimal 2 karakter");
+    if (!authForm.email || !emailRe.test(authForm.email.trim()))
+      return setAuthError("Format email tidak valid");
+    if (!authForm.password || authForm.password.length < 6)
+      return setAuthError("Password minimal 6 karakter");
+    // ────────────────────────────────────────────────────────────────────
     setAuthLoading(true);
     try {
       const endpoint = authTab === "login" ? "/api/auth/login" : "/api/auth/register";
       const body = authTab === "login"
         ? { email: authForm.email, password: authForm.password }
         : { name: authForm.name, email: authForm.email, password: authForm.password };
-      const res = await fetch(endpoint, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      // Ensure a fresh CSRF token right before the auth request
+      await fetchCsrfToken();
+      const res = await fetch(endpoint, { method: "POST", credentials: "include", headers: secureHeaders(null), body: JSON.stringify(body) });
       const data = await res.json();
       if (!res.ok) { setAuthError(data.error || "Gagal masuk"); return; }
       saveAuth(data.user, data.token);
@@ -268,13 +307,14 @@ export default function App() {
   const saveGallery = async () => {
     if (!galleryForm.title.trim()) return setGalleryFormError("Judul wajib diisi");
     if (!galleryForm.src_url.trim()) return setGalleryFormError("URL gambar wajib diisi");
+    try { new URL(galleryForm.src_url.trim()); } catch { return setGalleryFormError("URL gambar tidak valid"); }
     setGalleryFormError("");
     setGalleryFormLoading(true);
     try {
       const body = { ...galleryForm, thumb_url: galleryForm.thumb_url.trim() || galleryForm.src_url.trim() };
       const method = editingGallery ? "PUT" : "POST";
       const url = editingGallery ? `/api/gallery/${editingGallery.id}` : "/api/gallery";
-      const res = await fetch(url, { method, headers: authHeaders(authToken), body: JSON.stringify(body) });
+      const res = await fetch(url, { method, credentials: "include", headers: secureHeaders(authToken), body: JSON.stringify(body) });
       const data = await res.json();
       if (!res.ok) return setGalleryFormError(data.error || "Gagal menyimpan");
       setGalleryFormOpen(false);
@@ -286,7 +326,7 @@ export default function App() {
 
   const deleteGallery = async (id) => {
     try {
-      const res = await fetch(`/api/gallery/${id}`, { method: "DELETE", headers: authHeaders(authToken) });
+      const res = await fetch(`/api/gallery/${id}`, { method: "DELETE", credentials: "include", headers: secureHeaders(authToken) });
       if (!res.ok) { const d = await res.json(); showToast(d.error || "Gagal hapus"); return; }
       setGalleryDeleteId(null);
       await fetchGallery();
@@ -295,7 +335,17 @@ export default function App() {
   };
 
   useEffect(() => {
+    // ─── HTTPS redirect (production safety) ─────────────────────────────
+    if (typeof window !== "undefined" &&
+        window.location.protocol === "http:" &&
+        window.location.hostname !== "localhost" &&
+        !window.location.hostname.startsWith("127.")) {
+      window.location.replace(window.location.href.replace(/^http:/, "https:"));
+      return;
+    }
+
     setMounted(true);
+    fetchCsrfToken();    // fetch CSRF token before any mutations
     fetchCategories();
     fetchMenu();
     fetchTables();
@@ -362,7 +412,8 @@ export default function App() {
     try {
       await fetch(`/api/orders/${orderNumber}/status`, {
         method: "PATCH",
-        headers: authHeaders(authToken),
+        credentials: "include",
+        headers: secureHeaders(authToken),
         body: JSON.stringify({ status }),
       });
       setOrders(prev => prev.map(o => o.order_number === orderNumber ? { ...o, status } : o));
@@ -401,7 +452,7 @@ export default function App() {
       const method = editingTable ? "PUT" : "POST";
       const url = editingTable ? `/api/tables/${editingTable.id}` : "/api/tables";
       const res = await fetch(url, {
-        method, headers: authHeaders(authToken),
+        method, credentials: "include", headers: secureHeaders(authToken),
         body: JSON.stringify({ ...tableForm, capacity: Number(tableForm.capacity) }),
       });
       const data = await res.json();
@@ -415,7 +466,7 @@ export default function App() {
   const deleteTable = async (id) => {
     if (!window.confirm("Hapus meja ini?")) return;
     try {
-      const res = await fetch(`/api/tables/${id}`, { method: "DELETE", headers: authHeaders(authToken) });
+      const res = await fetch(`/api/tables/${id}`, { method: "DELETE", credentials: "include", headers: secureHeaders(authToken) });
       const data = await res.json();
       if (!res.ok) return showToast(data.error || "Gagal menghapus meja");
       fetchTables();
@@ -429,7 +480,8 @@ export default function App() {
       if (!tbl) return;
       await fetch(`/api/tables/${tbl.id}`, {
         method: "PUT",
-        headers: authHeaders(authToken),
+        credentials: "include",
+        headers: secureHeaders(authToken),
         body: JSON.stringify({ table_number: tbl.table_number, capacity: tbl.capacity, location: tbl.location, status: "available" }),
       });
       fetchTables();
@@ -457,7 +509,7 @@ export default function App() {
     const entry = { event_name, params, ts: new Date().toISOString(), eid: Date.now() + Math.random() };
     setGaEvents(prev => {
       const next = [entry, ...prev].slice(0, 200);
-      try { sessionStorage.setItem("nc_ga_events", JSON.stringify(next)); } catch {}
+      try { sessionStorage.setItem("nc_ga_events", JSON.stringify(next)); } catch { }
       return next;
     });
     if (typeof window.gtag === "function") window.gtag("event", event_name, params);
@@ -473,13 +525,16 @@ export default function App() {
 
   const clearGaEvents = () => {
     setGaEvents([]);
-    try { sessionStorage.removeItem("nc_ga_events"); } catch {}
+    try { sessionStorage.removeItem("nc_ga_events"); } catch { }
     showToast("Log events dikosongkan");
   };
 
   const submitOrder = async () => {
     if (!form.name.trim()) return showToast("Nama harus diisi!");
+    if (form.name.trim().length < 2) return showToast("Nama minimal 2 karakter!");
+    if (form.phone && !/^[0-9+\-\s()]{7,20}$/.test(form.phone)) return showToast("Nomor telepon tidak valid!");
     if (form.type === "dine_in" && !form.table) return showToast("Pilih nomor meja terlebih dahulu!");
+    if (cart.length === 0) return showToast("Keranjang kosong!");
     try {
       const body = {
         customer_name: form.name,
@@ -492,7 +547,8 @@ export default function App() {
       };
       const res = await fetch("/api/orders", {
         method: "POST",
-        headers: authHeaders(authToken),
+        credentials: "include",
+        headers: secureHeaders(authToken),
         body: JSON.stringify(body),
       });
       const data = await res.json();
@@ -532,7 +588,9 @@ export default function App() {
     setUserFormOpen(true);
   };
   const saveUser = async () => {
+    const emailRe = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
     if (!userForm.name.trim() || !userForm.email.trim()) return setUserFormError("Nama dan email wajib diisi");
+    if (!emailRe.test(userForm.email.trim())) return setUserFormError("Format email tidak valid");
     if (!editingUser && userForm.password.length < 6) return setUserFormError("Password minimal 6 karakter");
     setUserFormError("");
     try {
@@ -540,7 +598,7 @@ export default function App() {
       const url = editingUser ? `/api/users/${editingUser.id}` : "/api/users";
       const body = { ...userForm };
       if (editingUser && !body.password) delete body.password;
-      const res = await fetch(url, { method, headers: authHeaders(authToken), body: JSON.stringify(body) });
+      const res = await fetch(url, { method, credentials: "include", headers: secureHeaders(authToken), body: JSON.stringify(body) });
       const data = await res.json();
       if (!res.ok) return setUserFormError(data.error || "Gagal menyimpan");
       setUserFormOpen(false);
@@ -551,7 +609,7 @@ export default function App() {
   const deleteUser = async (id) => {
     if (!window.confirm("Hapus pengguna ini?")) return;
     try {
-      const res = await fetch(`/api/users/${id}`, { method: "DELETE", headers: authHeaders(authToken) });
+      const res = await fetch(`/api/users/${id}`, { method: "DELETE", credentials: "include", headers: secureHeaders(authToken) });
       const data = await res.json();
       if (!res.ok) return showToast(data.error || "Gagal menghapus");
       fetchUserList();
@@ -1239,9 +1297,15 @@ export default function App() {
                 </div>
               </div>
             </div>
-            <div style={{ borderTop: "1px solid rgba(138,138,126,.08)", padding: "1.25rem 3rem", display: "flex", justifyContent: "space-between", alignItems: "center", maxWidth: 1100, margin: "0 auto" }}>
-              <span style={{ color: "#4a4a42", fontSize: ".7rem", letterSpacing: ".12em" }}>© 2025 Noir Coffee. All rights reserved.</span>
-              <span style={{ color: "#4a4a42", fontSize: ".7rem", letterSpacing: ".12em" }}>Bandung, Indonesia</span>
+            <div style={{ borderTop: "1px solid rgba(138,138,126,.08)", padding: "1.25rem 3rem", display: "flex", justifyContent: "space-between", alignItems: "center", maxWidth: 1100, margin: "0 auto", flexWrap: "wrap", gap: ".75rem" }}>
+              <span style={{ color: "#4a4a42", fontSize: ".7rem", letterSpacing: ".12em" }}>© {new Date().getFullYear()} Noir Coffee. All rights reserved.</span>
+              <div style={{ display: "flex", gap: "1.5rem", alignItems: "center", flexWrap: "wrap" }}>
+                {[{ label: "Kebijakan Privasi", p: PAGES.PRIVACY }, { label: "Syarat & Ketentuan", p: PAGES.TERMS }, { label: "Informasi Pajak", p: PAGES.TAX }].map(({ label, p }) => (
+                  <button key={p} onClick={() => setPage(p)} style={{ background: "none", border: "none", color: "#4a4a42", fontSize: ".7rem", letterSpacing: ".1em", cursor: "pointer", textDecoration: "underline", textDecorationColor: "rgba(74,74,66,.4)", transition: "color .2s", padding: 0 }}
+                    onMouseEnter={e => e.target.style.color = "#8a8a7e"} onMouseLeave={e => e.target.style.color = "#4a4a42"}>{label}</button>
+                ))}
+                <span style={{ color: "#4a4a42", fontSize: ".7rem", letterSpacing: ".12em" }}>Bandung, Indonesia</span>
+              </div>
             </div>
           </footer>
         </div>
@@ -2303,8 +2367,8 @@ export default function App() {
               {/* ── ANALYTICS VIEW ─────────────────────────────────────────── */}
               {adminView === "analytics" && (() => {
                 const purchases = gaEvents.filter(e => e.event_name === "purchase");
-                const addCarts  = gaEvents.filter(e => e.event_name === "add_to_cart");
-                const convRate  = gaEvents.filter(e => e.event_name === "page_view").length > 0
+                const addCarts = gaEvents.filter(e => e.event_name === "add_to_cart");
+                const convRate = gaEvents.filter(e => e.event_name === "page_view").length > 0
                   ? ((purchases.length / Math.max(gaEvents.filter(e => e.event_name === "page_view").length, 1)) * 100).toFixed(1)
                   : "0.0";
                 const totalRevGA = purchases.reduce((s, e) => s + (Number(e.params?.value) || 0), 0);
@@ -2429,10 +2493,10 @@ export default function App() {
                                 const paramStr = ev.event_name === "purchase"
                                   ? `${ev.params?.transaction_id} · Rp ${Number(ev.params?.value || 0).toLocaleString("id-ID")}`
                                   : ev.event_name === "add_to_cart"
-                                  ? (ev.params?.items?.[0]?.item_name || "")
-                                  : ev.event_name === "page_view"
-                                  ? ev.params?.page_name || ""
-                                  : JSON.stringify(ev.params).slice(0, 60);
+                                    ? (ev.params?.items?.[0]?.item_name || "")
+                                    : ev.event_name === "page_view"
+                                      ? ev.params?.page_name || ""
+                                      : JSON.stringify(ev.params).slice(0, 60);
                                 return (
                                   <tr key={ev.eid}
                                     onMouseOver={e => e.currentTarget.style.background = "rgba(200,169,110,.02)"}
@@ -2460,7 +2524,7 @@ export default function App() {
                       <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
                         {[
                           { step: "01", title: "Buat Property GA4", desc: "Buka analytics.google.com → Admin → Create Property. Pilih platform Web." },
-                          { step: "02", title: "Salin Measurement ID", desc: 'Di Data Streams → Web → copy Measurement ID (format: G-XXXXXXXXXX).'},
+                          { step: "02", title: "Salin Measurement ID", desc: 'Di Data Streams → Web → copy Measurement ID (format: G-XXXXXXXXXX).' },
                           { step: "03", title: "Tempel di Kolom di Atas", desc: "Paste ID ke input di atas lalu klik Simpan & Muat. Script GA4 otomatis dimuat." },
                           { step: "04", title: "Tandai Konversi", desc: "Di GA4 Dashboard → Events → Tandai \"purchase\" dan \"add_to_cart\" sebagai konversi." },
                           { step: "05", title: "Verifikasi di Realtime", desc: "Buka GA4 Realtime Report untuk memastikan events masuk dengan benar." },
@@ -2486,6 +2550,172 @@ export default function App() {
           </div>
         )
       )}
+
+      {/* ======================== LEGAL PAGES ======================== */}
+      {[PAGES.PRIVACY, PAGES.TERMS, PAGES.TAX].includes(page) && (() => {
+        const LEGAL_CONTENT = {
+          [PAGES.PRIVACY]: {
+            title: "Kebijakan Privasi",
+            subtitle: "Privacy Policy",
+            lastUpdated: "1 Januari 2025",
+            sections: [
+              {
+                heading: "1. Informasi yang Kami Kumpulkan",
+                body: `Kami mengumpulkan informasi yang Anda berikan secara langsung saat menggunakan layanan Noir Coffee, termasuk:\n\n• Nama lengkap dan nomor telepon saat melakukan pemesanan\n• Alamat email saat mendaftar akun\n• Data pesanan (item yang dipesan, metode pembayaran, catatan meja)\n• Riwayat transaksi yang terkait dengan akun Anda\n\nKami tidak menyimpan data kartu kredit atau informasi pembayaran sensitif lainnya secara langsung di sistem kami.`
+              },
+              {
+                heading: "2. Cara Kami Menggunakan Informasi Anda",
+                body: `Informasi yang kami kumpulkan digunakan untuk:\n\n• Memproses dan mengonfirmasi pesanan Anda\n• Mengirimkan notifikasi status pesanan\n• Meningkatkan kualitas layanan dan pengalaman pengguna\n• Menghubungi Anda terkait pesanan atau informasi promosi (jika Anda menyetujui)\n• Keperluan analisis internal dan pengembangan produk`
+              },
+              {
+                heading: "3. Penyimpanan & Keamanan Data",
+                body: `Data Anda disimpan di server yang berlokasi di Indonesia dengan standar keamanan industri, termasuk:\n\n• Enkripsi data dalam transit menggunakan protokol HTTPS/TLS\n• Akses database yang dibatasi hanya untuk personel yang berwenang\n• Kata sandi disimpan dalam bentuk hash menggunakan algoritma bcrypt\n\nMeskipun kami berupaya sepenuhnya melindungi data Anda, tidak ada sistem yang sepenuhnya bebas risiko. Kami mendorong Anda untuk menjaga kerahasiaan kredensial akun Anda.`
+              },
+              {
+                heading: "4. Berbagi Informasi dengan Pihak Ketiga",
+                body: `Kami tidak menjual, memperdagangkan, atau menyewakan informasi pribadi Anda kepada pihak ketiga. Informasi Anda hanya dapat dibagikan dalam kondisi berikut:\n\n• Penyedia layanan teknis yang membantu operasional platform (dengan perjanjian kerahasiaan)\n• Kewajiban hukum berdasarkan peraturan perundang-undangan yang berlaku di Indonesia\n• Proses bisnis seperti merger atau akuisisi (Anda akan dinotifikasi terlebih dahulu)`
+              },
+              {
+                heading: "5. Cookie & Teknologi Pelacakan",
+                body: `Website kami menggunakan cookie dan penyimpanan lokal browser (localStorage) untuk:\n\n• Menyimpan sesi login Anda agar tidak perlu masuk ulang\n• Mengingat preferensi tampilan dan keranjang belanja sementara\n• Analisis kunjungan melalui Google Analytics (jika diaktifkan admin)\n\nAnda dapat menonaktifkan cookie melalui pengaturan browser, namun beberapa fitur mungkin tidak berfungsi optimal.`
+              },
+              {
+                heading: "6. Hak-Hak Anda",
+                body: `Sesuai dengan Undang-Undang Perlindungan Data Pribadi (UU PDP) No. 27 Tahun 2022, Anda berhak untuk:\n\n• Mengakses data pribadi yang kami simpan tentang Anda\n• Meminta koreksi data yang tidak akurat\n• Meminta penghapusan akun dan data pribadi Anda\n• Menarik persetujuan penggunaan data kapan saja\n\nUntuk menggunakan hak-hak tersebut, hubungi kami melalui email atau nomor telepon yang tercantum di halaman ini.`
+              },
+              {
+                heading: "7. Perubahan Kebijakan",
+                body: `Kebijakan Privasi ini dapat diperbarui sewaktu-waktu. Perubahan material akan diinformasikan melalui notifikasi di website atau email terdaftar Anda. Penggunaan layanan Noir Coffee setelah perubahan berlaku dianggap sebagai persetujuan terhadap kebijakan yang diperbarui.`
+              },
+              {
+                heading: "8. Hubungi Kami",
+                body: `Jika Anda memiliki pertanyaan atau kekhawatiran mengenai kebijakan privasi ini, silakan hubungi:\n\nNoir Coffee\nJl. Braga No. 88, Bandung, Jawa Barat 40111\nEmail: privacy@noircoffee.id\nTelepon: +62 811 2345 6789\nJam layanan: Senin–Jumat, 09.00–17.00 WIB`
+              }
+            ]
+          },
+          [PAGES.TERMS]: {
+            title: "Syarat & Ketentuan",
+            subtitle: "Terms & Conditions",
+            lastUpdated: "1 Januari 2025",
+            sections: [
+              {
+                heading: "1. Penerimaan Syarat",
+                body: `Dengan mengakses dan menggunakan platform pemesanan digital Noir Coffee, Anda menyatakan telah membaca, memahami, dan menyetujui seluruh syarat dan ketentuan yang berlaku. Jika Anda tidak menyetujui syarat ini, mohon tidak menggunakan layanan kami.`
+              },
+              {
+                heading: "2. Layanan yang Kami Sediakan",
+                body: `Noir Coffee menyediakan:\n\n• Platform pemesanan makanan dan minuman secara digital\n• Sistem antrean dan pelacakan status pesanan secara real-time\n• Galeri produk dan informasi menu\n• Manajemen akun pengguna dan riwayat transaksi\n\nSeluruh layanan digital bersifat komplementer dan merupakan fasilitas tambahan dari layanan fisik kedai kopi kami.`
+              },
+              {
+                heading: "3. Akun Pengguna",
+                body: `Dalam membuat dan menggunakan akun, Anda wajib:\n\n• Memberikan informasi yang akurat, lengkap, dan terkini\n• Menjaga kerahasiaan kata sandi akun Anda\n• Tidak membagikan akses akun kepada pihak lain\n• Segera melaporkan penggunaan akun yang mencurigakan\n\nNoir Coffee berhak menangguhkan atau menghapus akun yang terbukti melanggar ketentuan ini atau disalahgunakan.`
+              },
+              {
+                heading: "4. Pemesanan & Pembayaran",
+                body: `Ketentuan pemesanan:\n\n• Pesanan yang telah dikonfirmasi tidak dapat dibatalkan secara sepihak\n• Harga yang tertera di menu adalah harga final termasuk pajak yang berlaku\n• Metode pembayaran yang tersedia: Tunai (Cash) dan QRIS\n• Pembayaran dilakukan di kasir pada saat penyerahan pesanan\n• Untuk pemesanan dine-in, harap memastikan nomor meja yang benar sebelum konfirmasi\n• Noir Coffee berhak membatalkan pesanan jika terjadi kehabisan stok atau kondisi force majeure`
+              },
+              {
+                heading: "5. Pengiriman & Penyajian",
+                body: `Estimasi waktu penyajian:\n\n• Dine-in: 10–20 menit sejak pesanan dikonfirmasi dapur\n• Takeaway: 10–15 menit untuk pengambilan di konter\n\nWaktu dapat bervariasi pada jam sibuk. Kami tidak bertanggung jawab atas keterlambatan yang disebabkan oleh antrian tinggi atau kondisi di luar kendali kami.`
+              },
+              {
+                heading: "6. Produk & Ketersediaan",
+                body: `• Gambar produk hanyalah ilustrasi dan mungkin sedikit berbeda dengan tampilan aktual\n• Ketersediaan menu dapat berubah tanpa pemberitahuan sebelumnya\n• Kami berupaya mencantumkan informasi alergen, namun dapur kami tidak bersifat bebas-alergen. Harap informasikan alergi Anda kepada staf kami
+• Beberapa menu bersifat musiman atau terbatas stok`
+              },
+              {
+                heading: "7. Keluhan & Pengembalian",
+                body: `Jika Anda tidak puas dengan produk yang diterima:\n\n• Sampaikan keluhan kepada staf di lokasi segera setelah produk diterima\n• Pengembalian atau penggantian produk hanya dapat dilakukan jika terdapat kesalahan dari pihak Noir Coffee (produk salah, kualitas tidak sesuai standar)\n• Noir Coffee berhak menolak klaim yang tidak disertai bukti yang memadai\n• Refund tunai tidak tersedia; penggantian berupa produk serupa atau kredit akun`
+              },
+              {
+                heading: "8. Batasan Tanggung Jawab",
+                body: `Noir Coffee tidak bertanggung jawab atas:\n\n• Kerugian tidak langsung atau kehilangan keuntungan yang timbul dari penggunaan layanan\n• Gangguan teknis di luar kendali kami (internet, server, dll.)\n• Penyalahgunaan akun akibat kelalaian pengguna sendiri\n• Reaksi alergi jika pengguna tidak menginformasikan kondisi alerginya`
+              },
+              {
+                heading: "9. Hak Kekayaan Intelektual",
+                body: `Seluruh konten yang terdapat di platform Noir Coffee — termasuk logo, nama merek, desain, foto, teks, dan kode perangkat lunak — adalah hak kekayaan intelektual Noir Coffee dan dilindungi oleh hukum yang berlaku. Reproduksi atau penggunaan konten tanpa izin tertulis dari Noir Coffee dilarang keras.`
+              },
+              {
+                heading: "10. Hukum yang Berlaku",
+                body: `Syarat dan ketentuan ini diatur oleh hukum Republik Indonesia. Setiap sengketa yang timbul akan diselesaikan secara musyawarah, dan jika tidak tercapai kesepakatan, akan diselesaikan melalui pengadilan yang berwenang di Bandung, Jawa Barat.`
+              },
+              {
+                heading: "11. Perubahan Ketentuan",
+                body: `Kami berhak memperbarui syarat dan ketentuan ini kapan saja. Versi terbaru selalu tersedia di halaman ini beserta tanggal pembaruan terakhir. Penggunaan layanan setelah pembaruan berlaku dianggap sebagai penerimaan atas perubahan tersebut.`
+              },
+              {
+                heading: "12. Hubungi Kami",
+                body: `Untuk pertanyaan terkait syarat dan ketentuan ini:\n\nNoir Coffee\nJl. Braga No. 88, Bandung, Jawa Barat 40111\nEmail: legal@noircoffee.id\nTelepon: +62 811 2345 6789`
+              }
+            ]
+          },
+          [PAGES.TAX]: {
+            title: "Informasi Pajak",
+            subtitle: "Tax Information",
+            lastUpdated: "1 Januari 2025",
+            sections: [
+              {
+                heading: "1. Status Perpajakan",
+                body: `Noir Coffee adalah entitas usaha yang terdaftar dan patuh terhadap peraturan perpajakan yang berlaku di Indonesia, termasuk ketentuan dari Direktorat Jenderal Pajak (DJP) Kementerian Keuangan Republik Indonesia.`
+              },
+              {
+                heading: "2. Pajak Pertambahan Nilai (PPN)",
+                body: `Berdasarkan Undang-Undang Harmonisasi Peraturan Perpajakan (UU HPP) No. 7 Tahun 2021:\n\n• Tarif PPN yang berlaku: 12% (per 1 Januari 2025)\n• Harga yang tertera pada menu digital Noir Coffee adalah harga final yang telah memperhitungkan komponen pajak\n• Struk/nota pembelian mencantumkan rincian harga dasar, PPN, dan total pembayaran\n\nCatatan: Jika harga yang ditampilkan di menu belum termasuk PPN, maka PPN akan ditambahkan pada saat pembayaran dan tercantum pada struk Anda.`
+              },
+              {
+                heading: "3. Pajak Daerah & Pajak Restoran",
+                body: `Sesuai UU No. 28 Tahun 2009 tentang Pajak Daerah dan Retribusi Daerah dan Peraturan Daerah Kota Bandung:\n\n• Pajak Bangunan Usaha Jasa Boga/Restoran: 10% dari omzet (dibayarkan ke Pemkot Bandung)\n• Pajak ini merupakan kewajiban pelaku usaha dan bukan beban tambahan bagi konsumen\n• Seluruh kewajiban pajak daerah telah diperhitungkan dalam penetapan harga jual produk`
+              },
+              {
+                heading: "4. Bukti Transaksi & e-Faktur",
+                body: `Noir Coffee menyediakan bukti transaksi dalam bentuk:\n\n• Struk digital yang dapat ditampilkan di halaman konfirmasi pesanan\n• Nota fisik yang dicetak pada mesin kasir\n\nUntuk kebutuhan reimbursement perusahaan atau perpajakan korporat yang memerlukan Faktur Pajak resmi (e-Faktur), silakan menghubungi kami minimal 1 hari kerja sebelum transaksi melalui email: pajak@noircoffee.id`
+              },
+              {
+                heading: "5. Nomor Pokok Wajib Pajak (NPWP)",
+                body: `Informasi NPWP dan data perpajakan resmi Noir Coffee tersedia untuk keperluan bisnis yang sah. Silakan hubungi kami melalui email resmi untuk mendapatkan informasi tersebut beserta dokumen legalitas usaha yang diperlukan.`
+              },
+              {
+                heading: "6. Pertanyaan Terkait Pajak",
+                body: `Untuk informasi lebih lanjut mengenai perpajakan atau permintaan dokumen fiskal:\n\nNoir Coffee — Divisi Keuangan\nJl. Braga No. 88, Bandung, Jawa Barat 40111\nEmail: pajak@noircoffee.id\nTelepon: +62 811 2345 6789\nJam layanan: Senin–Jumat, 09.00–17.00 WIB`
+              }
+            ]
+          }
+        };
+
+        const content = LEGAL_CONTENT[page];
+        return (
+          <div style={{ paddingTop: "4.5rem", minHeight: "100vh" }} className="fade-in">
+            {/* Header */}
+            <div style={{ borderBottom: "1px solid rgba(138,138,126,.1)", padding: "4rem 3rem 3rem", maxWidth: 1100, margin: "0 auto" }}>
+              <div style={{ fontSize: ".6rem", letterSpacing: ".4em", textTransform: "uppercase", color: "#c8a96e", marginBottom: "1rem", display: "flex", alignItems: "center", gap: "1rem" }}>
+                <span style={{ display: "inline-block", width: 36, height: 1, background: "#c8a96e" }} />
+                Legal · {content.subtitle}
+              </div>
+              <h1 className="serif" style={{ fontSize: "clamp(2.4rem,6vw,4rem)", fontWeight: 400, color: "#f0ede6", letterSpacing: ".03em", margin: "0 0 1rem" }}>{content.title}</h1>
+              <p style={{ color: "#8a8a7e", fontSize: ".75rem", letterSpacing: ".1em" }}>Terakhir diperbarui: {content.lastUpdated}</p>
+            </div>
+
+            {/* Content */}
+            <div style={{ maxWidth: 780, margin: "0 auto", padding: "3rem 3rem 5rem" }}>
+              {content.sections.map((s, i) => (
+                <div key={i} style={{ marginBottom: "2.5rem" }}>
+                  <h2 style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: "1.15rem", fontWeight: 600, color: "#c8a96e", marginBottom: ".85rem", letterSpacing: ".04em" }}>{s.heading}</h2>
+                  <div style={{ fontSize: ".85rem", color: "#a0a092", lineHeight: 1.9, whiteSpace: "pre-line" }}>{s.body}</div>
+                </div>
+              ))}
+
+              {/* Back + sibling links */}
+              <div style={{ marginTop: "3.5rem", paddingTop: "2rem", borderTop: "1px solid rgba(138,138,126,.1)", display: "flex", flexWrap: "wrap", gap: "1rem", alignItems: "center" }}>
+                <button onClick={() => setPage(PAGES.MENU)} style={{ background: "none", border: "1px solid rgba(200,169,110,.35)", color: "#c8a96e", padding: ".55rem 1.4rem", fontSize: ".7rem", letterSpacing: ".2em", textTransform: "uppercase", cursor: "pointer", transition: "all .2s" }}>← Kembali ke Menu</button>
+                <span style={{ color: "#4a4a42", fontSize: ".7rem" }}>|</span>
+                {[{ label: "Kebijakan Privasi", p: PAGES.PRIVACY }, { label: "Syarat & Ketentuan", p: PAGES.TERMS }, { label: "Informasi Pajak", p: PAGES.TAX }].filter(l => l.p !== page).map(({ label, p }) => (
+                  <button key={p} onClick={() => setPage(p)} style={{ background: "none", border: "none", color: "#8a8a7e", fontSize: ".7rem", letterSpacing: ".12em", cursor: "pointer", textDecoration: "underline", textDecorationColor: "rgba(138,138,126,.3)", padding: 0 }}>{label}</button>
+                ))}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }

@@ -1,13 +1,148 @@
 ﻿require("dotenv").config();
-const express = require("express");
-const cors = require("cors");
-const mysql = require("mysql2/promise");
-const jwt = require("jsonwebtoken");
-const bcrypt = require("bcryptjs");
+
+// ─── Core ─────────────────────────────────────────────────────────────────────
+const http        = require("http");
+const https       = require("https");
+const fs          = require("fs");
+const path        = require("path");
+const express     = require("express");
+const cors        = require("cors");
+const mysql       = require("mysql2/promise");
+const jwt         = require("jsonwebtoken");
+const bcrypt      = require("bcryptjs");
+
+// ─── Security packages ────────────────────────────────────────────────────────
+const helmet        = require("helmet");
+const rateLimit     = require("express-rate-limit");
+const cookieParser  = require("cookie-parser");
+const { doubleCsrf } = require("csrf-csrf");
+
+// ─── Load SSL certificates ────────────────────────────────────────────────────
+const CERTS_DIR    = path.join(__dirname, "certs");
+const HTTPS_PORT   = parseInt(process.env.HTTPS_PORT || "3443", 10);
+const HTTP_PORT    = parseInt(process.env.PORT       || "3001", 10);
+const CSRF_SECRET  = process.env.CSRF_SECRET || "noir_csrf_secret_change_in_prod";
+const IS_PROD      = process.env.NODE_ENV === "production";
+
+let sslOptions = null;
+try {
+    sslOptions = {
+        key:  fs.readFileSync(path.join(CERTS_DIR, "key.pem")),
+        cert: fs.readFileSync(path.join(CERTS_DIR, "cert.pem")),
+    };
+    console.log("[SSL] Certificates loaded from certs/");
+} catch {
+    console.warn("[SSL] No certs found — HTTPS disabled. Run: node generate-certs.js");
+}
 
 const app = express();
-app.use(cors());
-app.use(express.json());
+
+// ─── 1. Security headers (Helmet) ────────────────────────────────────────────
+app.use(helmet({
+    contentSecurityPolicy: {
+        directives: {
+            defaultSrc:     ["'self'"],
+            scriptSrc:      ["'self'", "'unsafe-inline'", "https://www.googletagmanager.com", "https://www.google-analytics.com"],
+            styleSrc:       ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
+            fontSrc:        ["'self'", "https://fonts.gstatic.com"],
+            imgSrc:         ["'self'", "data:", "https:", "blob:"],
+            connectSrc:     ["'self'", "https://www.google-analytics.com", "https://region1.google-analytics.com"],
+            frameSrc:       ["'none'"],
+            objectSrc:      ["'none'"],
+            upgradeInsecureRequests: IS_PROD ? [] : null,
+        },
+    },
+    hsts: {
+        maxAge:            31536000,
+        includeSubDomains: true,
+        preload:           true,
+    },
+    referrerPolicy:           { policy: "strict-origin-when-cross-origin" },
+    crossOriginOpenerPolicy:  { policy: "same-origin" },
+    crossOriginResourcePolicy:{ policy: "cross-origin" },
+}));
+
+// ─── 2. CORS ─────────────────────────────────────────────────────────────────
+const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || "https://localhost:5173,http://localhost:5173,https://localhost:3443").split(",");
+app.use(cors({
+    origin: (origin, cb) => {
+        // Allow same-origin or listed origins (also allow undefined origin for tools like Postman in dev)
+        if (!origin || ALLOWED_ORIGINS.includes(origin)) return cb(null, true);
+        cb(new Error(`CORS: origin ${origin} not allowed`));
+    },
+    credentials: true,   // needed so the browser sends/receives the CSRF cookie
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+}));
+
+// ─── 3. Body parser (with size limit) ────────────────────────────────────────
+app.use(express.json({ limit: "50kb" }));
+app.use(express.urlencoded({ extended: false, limit: "50kb" }));
+app.use(cookieParser());
+
+// ─── 4. CSRF protection (double-submit cookie) ───────────────────────────────
+const {
+    generateCsrfToken, // v4 name (was generateToken in v3)
+    doubleCsrfProtection,  // middleware — validates X-csrf-token header vs cookie
+} = doubleCsrf({
+    getSecret: () => CSRF_SECRET,
+    // Required in csrf-csrf v4: returns a stable per-session identifier.
+    // This app is stateless (no express-session), so use an empty string.
+    getSessionIdentifier: () => "",
+    cookieName:    IS_PROD ? "__Host-nc.x-csrf-token" : "nc.x-csrf-token",
+    cookieOptions: {
+        httpOnly:  true,
+        sameSite:  "strict",
+        path:      "/",
+        secure:    IS_PROD || !!sslOptions,
+    },
+    size:         64,
+    // getCsrfTokenFromRequest is the correct v4 option name (was getTokenFromRequest in v3)
+    getCsrfTokenFromRequest: (req) =>
+        req.headers["x-csrf-token"] || req.body?._csrf,
+});
+
+// ─── 5. Rate limiters ─────────────────────────────────────────────────────────
+const authLimiter = rateLimit({
+    windowMs:  15 * 60 * 1000,   // 15 minutes
+    max:       20,                // max login/register attempts per window
+    standardHeaders: true,
+    legacyHeaders:   false,
+    message: { error: "Terlalu banyak percobaan. Coba lagi dalam 15 menit." },
+});
+
+const apiLimiter = rateLimit({
+    windowMs:  1 * 60 * 1000,    // 1 minute
+    max:       120,               // general API requests
+    standardHeaders: true,
+    legacyHeaders:   false,
+    message: { error: "Permintaan terlalu banyak. Coba lagi sebentar." },
+});
+
+app.use("/api/", apiLimiter);
+
+// ─── 6. CSRF token endpoint (public — no CSRF check here) ────────────────────
+app.get("/api/csrf-token", (req, res) => {
+    const token = generateCsrfToken(req, res, { overwrite: true });
+    res.json({ csrfToken: token });
+});
+
+// Apply global CSRF protection to ALL subsequent routes that mutate state
+// (doubleCsrfProtection only checks POST/PUT/PATCH/DELETE by design)
+app.use(doubleCsrfProtection);
+
+// Override error handling for CSRF failures
+// Handles both csrf-csrf v3 (EBADCSRFTOKEN) and v4 (InvalidCsrfTokenError)
+app.use((err, req, res, next) => {
+    const isCsrf =
+        err.code === "EBADCSRFTOKEN" ||
+        err.name === "InvalidCsrfTokenError" ||
+        err.statusCode === 403 && err.name?.toLowerCase().includes("csrf") ||
+        err.message?.toLowerCase().includes("csrf");
+    if (isCsrf) {
+        return res.status(403).json({ error: "CSRF token tidak valid atau sudah kedaluwarsa." });
+    }
+    next(err);
+});
 
 const JWT_SECRET = process.env.JWT_SECRET || "noir_coffee_secret";
 
@@ -112,26 +247,38 @@ const generateOrderNumber = async () => {
     } catch (err) { console.error("Gallery setup gagal:", err.message); }
 })();
 
+// ─── Input validation helpers ─────────────────────────────────────────────────
+const isValidEmail   = (e) => /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(String(e || "").trim());
+const sanitizeStr    = (s, max = 255) => String(s || "").trim().slice(0, max);
+const isValidPhone   = (p) => !p || /^[0-9+\-\s()]{7,20}$/.test(String(p).trim());
+const validRoles     = ["guest", "user", "admin"];
+const validPayments  = ["cash", "transfer", "qris", "debit", "credit"];
+const validOrderTypes= ["dine_in", "takeaway", "online"];
+const validStatuses  = ["pending", "confirmed", "preparing", "ready", "completed", "cancelled"];
+
 // AUTH
-app.post("/api/auth/register", async (req, res) => {
+app.post("/api/auth/register", authLimiter, async (req, res) => {
     try {
         const { name, email, password } = req.body;
         if (!name || !email || !password) return res.status(400).json({ error: "Nama, email, dan password wajib diisi" });
+        if (!isValidEmail(email)) return res.status(400).json({ error: "Format email tidak valid" });
         if (password.length < 6) return res.status(400).json({ error: "Password minimal 6 karakter" });
+        if (sanitizeStr(name).length < 2) return res.status(400).json({ error: "Nama minimal 2 karakter" });
         const [[existing]] = await pool.query("SELECT id FROM users WHERE email = ?", [email]);
         if (existing) return res.status(400).json({ error: "Email sudah terdaftar" });
-        const hash = await bcrypt.hash(password, 10);
-        const [result] = await pool.query("INSERT INTO users (name, email, password, role) VALUES (?,?,?,'user')", [name.trim(), email.trim().toLowerCase(), hash]);
+        const hash = await bcrypt.hash(password, 12);
+        const [result] = await pool.query("INSERT INTO users (name, email, password, role) VALUES (?,?,?,'user')", [sanitizeStr(name, 100), email.trim().toLowerCase(), hash]);
         const [[user]] = await pool.query("SELECT id, name, email, role FROM users WHERE id = ?", [result.insertId]);
         const token = jwt.sign({ id: user.id, name: user.name, email: user.email, role: user.role }, JWT_SECRET, { expiresIn: "7d" });
         res.status(201).json({ user, token });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-app.post("/api/auth/login", async (req, res) => {
+app.post("/api/auth/login", authLimiter, async (req, res) => {
     try {
         const { email, password } = req.body;
         if (!email || !password) return res.status(400).json({ error: "Email dan password wajib diisi" });
+        if (!isValidEmail(email)) return res.status(400).json({ error: "Format email tidak valid" });
         const [[user]] = await pool.query("SELECT * FROM users WHERE email = ?", [email.trim().toLowerCase()]);
         if (!user) return res.status(401).json({ error: "Email atau password salah" });
         const match = await bcrypt.compare(password, user.password);
@@ -162,11 +309,13 @@ app.post("/api/users", authenticate, requireRole("admin"), async (req, res) => {
     try {
         const { name, email, password, role } = req.body;
         if (!name || !email || !password) return res.status(400).json({ error: "Nama, email, dan password wajib diisi" });
-        if (role && !["guest", "user", "admin"].includes(role)) return res.status(400).json({ error: "Role tidak valid" });
+        if (!isValidEmail(email)) return res.status(400).json({ error: "Format email tidak valid" });
+        if (password.length < 6) return res.status(400).json({ error: "Password minimal 6 karakter" });
+        if (role && !validRoles.includes(role)) return res.status(400).json({ error: "Role tidak valid" });
         const [[existing]] = await pool.query("SELECT id FROM users WHERE email = ?", [email]);
         if (existing) return res.status(400).json({ error: "Email sudah terdaftar" });
-        const hash = await bcrypt.hash(password, 10);
-        const [result] = await pool.query("INSERT INTO users (name, email, password, role) VALUES (?,?,?,?)", [name.trim(), email.trim().toLowerCase(), hash, role || "user"]);
+        const hash = await bcrypt.hash(password, 12);
+        const [result] = await pool.query("INSERT INTO users (name, email, password, role) VALUES (?,?,?,?)", [sanitizeStr(name, 100), email.trim().toLowerCase(), hash, role || "user"]);
         const [[user]] = await pool.query("SELECT id, name, email, role, created_at FROM users WHERE id = ?", [result.insertId]);
         res.status(201).json(user);
     } catch (err) { res.status(500).json({ error: err.message }); }
@@ -253,6 +402,28 @@ app.post("/api/orders", optionalAuth, async (req, res) => {
     try {
         await conn.beginTransaction();
         const { customer_name, customer_phone, type, table_number, payment_method, notes, items } = req.body;
+
+        // ── Validation ──────────────────────────────────────────────────────
+        if (!customer_name || sanitizeStr(customer_name).length < 2)
+            { await conn.rollback(); conn.release(); return res.status(400).json({ error: "Nama pelanggan wajib diisi (min 2 karakter)" }); }
+        if (!type || !validOrderTypes.includes(type))
+            { await conn.rollback(); conn.release(); return res.status(400).json({ error: "Tipe pesanan tidak valid" }); }
+        if (payment_method && !validPayments.includes(payment_method))
+            { await conn.rollback(); conn.release(); return res.status(400).json({ error: "Metode pembayaran tidak valid" }); }
+        if (!isValidPhone(customer_phone))
+            { await conn.rollback(); conn.release(); return res.status(400).json({ error: "Nomor telepon tidak valid" }); }
+        if (!Array.isArray(items) || items.length === 0)
+            { await conn.rollback(); conn.release(); return res.status(400).json({ error: "Pesanan harus memiliki minimal 1 item" }); }
+        if (items.length > 50)
+            { await conn.rollback(); conn.release(); return res.status(400).json({ error: "Pesanan terlalu banyak item" }); }
+        for (const item of items) {
+            if (!item.product_id || !item.product_name || item.price == null || !item.quantity)
+                { await conn.rollback(); conn.release(); return res.status(400).json({ error: "Data item pesanan tidak lengkap" }); }
+            if (item.quantity < 1 || item.quantity > 99)
+                { await conn.rollback(); conn.release(); return res.status(400).json({ error: "Jumlah item tidak valid" }); }
+        }
+        // ────────────────────────────────────────────────────────────────────
+
         if (type === "dine_in" && table_number) {
             const [[tbl]] = await conn.query("SELECT * FROM `tables` WHERE table_number = ? FOR UPDATE", [table_number]);
             if (!tbl) { await conn.rollback(); conn.release(); return res.status(400).json({ error: `Meja ${table_number} tidak ditemukan` }); }
@@ -265,11 +436,11 @@ app.post("/api/orders", optionalAuth, async (req, res) => {
         const userId = req.user ? req.user.id : null;
         const [result] = await conn.query(
             `INSERT INTO orders (user_id, order_number, customer_name, customer_phone, type, table_number, status, payment_status, payment_method, subtotal, tax, total, notes, created_at, updated_at) VALUES (?,?,?,?,?,?, 'pending','unpaid',?,?,?,?,?, NOW(), NOW())`,
-            [userId, order_number, customer_name, customer_phone || null, type, table_number || null, payment_method, subtotal, tax, total, notes || null]
+            [userId, order_number, sanitizeStr(customer_name, 100), customer_phone ? sanitizeStr(customer_phone, 20) : null, type, table_number || null, payment_method, subtotal, tax, total, notes ? sanitizeStr(notes, 500) : null]
         );
         const orderId = result.insertId;
         for (const item of items) {
-            await conn.query(`INSERT INTO order_items (order_id, product_id, product_name, price, quantity, subtotal, created_at, updated_at) VALUES (?,?,?,?,?,?, NOW(), NOW())`, [orderId, item.product_id, item.product_name, item.price, item.quantity, item.price * item.quantity]);
+            await conn.query(`INSERT INTO order_items (order_id, product_id, product_name, price, quantity, subtotal, created_at, updated_at) VALUES (?,?,?,?,?,?, NOW(), NOW())`, [orderId, item.product_id, sanitizeStr(item.product_name, 150), item.price, item.quantity, item.price * item.quantity]);
         }
         if (type === "dine_in" && table_number) {
             await conn.query("UPDATE `tables` SET status='occupied', updated_at=NOW() WHERE table_number=?", [table_number]);
@@ -465,5 +636,34 @@ app.delete("/api/gallery/:id", authenticate, requireRole("admin"), async (req, r
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-const PORT = process.env.PORT || 3001;
-app.listen(PORT, () => { console.log(`Noir Coffee API berjalan di http://localhost:${PORT}`); });
+// ─── Global error handler ─────────────────────────────────────────────────────
+app.use((err, req, res, _next) => {
+    console.error("[Error]", err.message);
+    res.status(500).json({ error: "Terjadi kesalahan server." });
+});
+
+// ─── Server startup ───────────────────────────────────────────────────────────
+if (sslOptions) {
+    // HTTPS server (primary)
+    https.createServer(sslOptions, app).listen(HTTPS_PORT, () => {
+        console.log(`[HTTPS] Noir Coffee API: https://localhost:${HTTPS_PORT}`);
+    });
+
+    // HTTP server — redirects all traffic to HTTPS
+    http.createServer((req, res) => {
+        const host = (req.headers.host || `localhost:${HTTPS_PORT}`).replace(`:${HTTP_PORT}`, `:${HTTPS_PORT}`);
+        res.writeHead(301, { Location: `https://${host}${req.url}` });
+        res.end();
+    }).listen(HTTP_PORT, () => {
+        console.log(`[HTTP]  Redirect http://localhost:${HTTP_PORT} → https://localhost:${HTTPS_PORT}`);
+    }).on("error", (e) => {
+        if (e.code === "EADDRINUSE") console.warn(`[HTTP]  Port ${HTTP_PORT} busy — redirect server skipped.`);
+        else console.error("[HTTP]", e.message);
+    });
+} else {
+    // Fallback to HTTP if certs are missing
+    app.listen(HTTP_PORT, () => {
+        console.log(`[HTTP]  Noir Coffee API (no SSL): http://localhost:${HTTP_PORT}`);
+        console.log(`        Run "node generate-certs.js" to enable HTTPS.`);
+    });
+}
