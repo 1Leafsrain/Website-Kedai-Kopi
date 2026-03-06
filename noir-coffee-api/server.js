@@ -1,33 +1,34 @@
 ﻿require("dotenv").config();
 
 // ─── Core ─────────────────────────────────────────────────────────────────────
-const http        = require("http");
-const https       = require("https");
-const fs          = require("fs");
-const path        = require("path");
-const express     = require("express");
-const cors        = require("cors");
-const mysql       = require("mysql2/promise");
-const jwt         = require("jsonwebtoken");
-const bcrypt      = require("bcryptjs");
+const http = require("http");
+const https = require("https");
+const fs = require("fs");
+const path = require("path");
+const express = require("express");
+const cors = require("cors");
+const mysql = require("mysql2/promise");
+const jwt = require("jsonwebtoken");
+const bcrypt = require("bcryptjs");
+const multer = require("multer");
 
 // ─── Security packages ────────────────────────────────────────────────────────
-const helmet        = require("helmet");
-const rateLimit     = require("express-rate-limit");
-const cookieParser  = require("cookie-parser");
+const helmet = require("helmet");
+const rateLimit = require("express-rate-limit");
+const cookieParser = require("cookie-parser");
 const { doubleCsrf } = require("csrf-csrf");
 
 // ─── Load SSL certificates ────────────────────────────────────────────────────
-const CERTS_DIR    = path.join(__dirname, "certs");
-const HTTPS_PORT   = parseInt(process.env.HTTPS_PORT || "3443", 10);
-const HTTP_PORT    = parseInt(process.env.PORT       || "3001", 10);
-const CSRF_SECRET  = process.env.CSRF_SECRET || "noir_csrf_secret_change_in_prod";
-const IS_PROD      = process.env.NODE_ENV === "production";
+const CERTS_DIR = path.join(__dirname, "certs");
+const HTTPS_PORT = parseInt(process.env.HTTPS_PORT || "3443", 10);
+const HTTP_PORT = parseInt(process.env.PORT || "3001", 10);
+const CSRF_SECRET = process.env.CSRF_SECRET || "noir_csrf_secret_change_in_prod";
+const IS_PROD = process.env.NODE_ENV === "production";
 
 let sslOptions = null;
 try {
     sslOptions = {
-        key:  fs.readFileSync(path.join(CERTS_DIR, "key.pem")),
+        key: fs.readFileSync(path.join(CERTS_DIR, "key.pem")),
         cert: fs.readFileSync(path.join(CERTS_DIR, "cert.pem")),
     };
     console.log("[SSL] Certificates loaded from certs/");
@@ -35,31 +36,51 @@ try {
     console.warn("[SSL] No certs found — HTTPS disabled. Run: node generate-certs.js");
 }
 
+// ─── Multer setup (product image uploads) ────────────────────────────────────
+const UPLOADS_PRODUCTS_DIR = path.join(__dirname, "uploads", "products");
+if (!fs.existsSync(UPLOADS_PRODUCTS_DIR)) fs.mkdirSync(UPLOADS_PRODUCTS_DIR, { recursive: true });
+
+const productImageStorage = multer.diskStorage({
+    destination: (_req, _file, cb) => cb(null, UPLOADS_PRODUCTS_DIR),
+    filename: (_req, file, cb) => {
+        const ext = path.extname(file.originalname).toLowerCase() || ".jpg";
+        cb(null, `prod_${Date.now()}_${Math.random().toString(36).slice(2)}${ext}`);
+    },
+});
+const uploadProductImage = multer({
+    storage: productImageStorage,
+    limits: { fileSize: 5 * 1024 * 1024 }, // 5 MB
+    fileFilter: (_req, file, cb) => {
+        if (!file.mimetype.startsWith("image/")) return cb(new Error("Hanya file gambar yang diizinkan"));
+        cb(null, true);
+    },
+});
+
 const app = express();
 
 // ─── 1. Security headers (Helmet) ────────────────────────────────────────────
 app.use(helmet({
     contentSecurityPolicy: {
         directives: {
-            defaultSrc:     ["'self'"],
-            scriptSrc:      ["'self'", "'unsafe-inline'", "https://www.googletagmanager.com", "https://www.google-analytics.com"],
-            styleSrc:       ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
-            fontSrc:        ["'self'", "https://fonts.gstatic.com"],
-            imgSrc:         ["'self'", "data:", "https:", "blob:"],
-            connectSrc:     ["'self'", "https://www.google-analytics.com", "https://region1.google-analytics.com"],
-            frameSrc:       ["'none'"],
-            objectSrc:      ["'none'"],
+            defaultSrc: ["'self'"],
+            scriptSrc: ["'self'", "'unsafe-inline'", "https://www.googletagmanager.com", "https://www.google-analytics.com"],
+            styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
+            fontSrc: ["'self'", "https://fonts.gstatic.com"],
+            imgSrc: ["'self'", "data:", "https:", "blob:"],
+            connectSrc: ["'self'", "https://www.google-analytics.com", "https://region1.google-analytics.com"],
+            frameSrc: ["'none'"],
+            objectSrc: ["'none'"],
             upgradeInsecureRequests: IS_PROD ? [] : null,
         },
     },
     hsts: {
-        maxAge:            31536000,
+        maxAge: 31536000,
         includeSubDomains: true,
-        preload:           true,
+        preload: true,
     },
-    referrerPolicy:           { policy: "strict-origin-when-cross-origin" },
-    crossOriginOpenerPolicy:  { policy: "same-origin" },
-    crossOriginResourcePolicy:{ policy: "cross-origin" },
+    referrerPolicy: { policy: "strict-origin-when-cross-origin" },
+    crossOriginOpenerPolicy: { policy: "same-origin" },
+    crossOriginResourcePolicy: { policy: "cross-origin" },
 }));
 
 // ─── 2. CORS ─────────────────────────────────────────────────────────────────
@@ -79,6 +100,9 @@ app.use(express.json({ limit: "50kb" }));
 app.use(express.urlencoded({ extended: false, limit: "50kb" }));
 app.use(cookieParser());
 
+// ─── 3b. Serve uploaded files (before CSRF, GET only) ────────────────────────
+app.use("/uploads", express.static(path.join(__dirname, "uploads")));
+
 // ─── 4. CSRF protection (double-submit cookie) ───────────────────────────────
 const {
     generateCsrfToken, // v4 name (was generateToken in v3)
@@ -88,14 +112,14 @@ const {
     // Required in csrf-csrf v4: returns a stable per-session identifier.
     // This app is stateless (no express-session), so use an empty string.
     getSessionIdentifier: () => "",
-    cookieName:    IS_PROD ? "__Host-nc.x-csrf-token" : "nc.x-csrf-token",
+    cookieName: IS_PROD ? "__Host-nc.x-csrf-token" : "nc.x-csrf-token",
     cookieOptions: {
-        httpOnly:  true,
-        sameSite:  "strict",
-        path:      "/",
-        secure:    IS_PROD || !!sslOptions,
+        httpOnly: true,
+        sameSite: "strict",
+        path: "/",
+        secure: IS_PROD || !!sslOptions,
     },
-    size:         64,
+    size: 64,
     // getCsrfTokenFromRequest is the correct v4 option name (was getTokenFromRequest in v3)
     getCsrfTokenFromRequest: (req) =>
         req.headers["x-csrf-token"] || req.body?._csrf,
@@ -103,18 +127,18 @@ const {
 
 // ─── 5. Rate limiters ─────────────────────────────────────────────────────────
 const authLimiter = rateLimit({
-    windowMs:  15 * 60 * 1000,   // 15 minutes
-    max:       20,                // max login/register attempts per window
+    windowMs: 15 * 60 * 1000,   // 15 minutes
+    max: 20,                // max login/register attempts per window
     standardHeaders: true,
-    legacyHeaders:   false,
+    legacyHeaders: false,
     message: { error: "Terlalu banyak percobaan. Coba lagi dalam 15 menit." },
 });
 
 const apiLimiter = rateLimit({
-    windowMs:  1 * 60 * 1000,    // 1 minute
-    max:       120,               // general API requests
+    windowMs: 1 * 60 * 1000,    // 1 minute
+    max: 120,               // general API requests
     standardHeaders: true,
-    legacyHeaders:   false,
+    legacyHeaders: false,
     message: { error: "Permintaan terlalu banyak. Coba lagi sebentar." },
 });
 
@@ -247,14 +271,27 @@ const generateOrderNumber = async () => {
     } catch (err) { console.error("Gallery setup gagal:", err.message); }
 })();
 
+// ─── Migrate products.image → TEXT (supports long URLs) ───────────────────────
+(async () => {
+    try {
+        const [[col]] = await pool.query(
+            "SELECT COLUMN_TYPE FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'products' AND COLUMN_NAME = 'image'"
+        );
+        if (col && !["text", "mediumtext", "longtext"].includes(col.COLUMN_TYPE.toLowerCase())) {
+            await pool.query("ALTER TABLE products MODIFY COLUMN `image` TEXT DEFAULT NULL");
+            console.log("[Migration] products.image → TEXT");
+        }
+    } catch { /* ignore if table not yet created */ }
+})();
+
 // ─── Input validation helpers ─────────────────────────────────────────────────
-const isValidEmail   = (e) => /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(String(e || "").trim());
-const sanitizeStr    = (s, max = 255) => String(s || "").trim().slice(0, max);
-const isValidPhone   = (p) => !p || /^[0-9+\-\s()]{7,20}$/.test(String(p).trim());
-const validRoles     = ["guest", "user", "admin"];
-const validPayments  = ["cash", "transfer", "qris", "debit", "credit"];
-const validOrderTypes= ["dine_in", "takeaway", "online"];
-const validStatuses  = ["pending", "confirmed", "preparing", "ready", "completed", "cancelled"];
+const isValidEmail = (e) => /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(String(e || "").trim());
+const sanitizeStr = (s, max = 255) => String(s || "").trim().slice(0, max);
+const isValidPhone = (p) => !p || /^[0-9+\-\s()]{7,20}$/.test(String(p).trim());
+const validRoles = ["guest", "user", "admin"];
+const validPayments = ["cash", "transfer", "qris", "debit", "credit"];
+const validOrderTypes = ["dine_in", "takeaway", "online"];
+const validStatuses = ["pending", "confirmed", "preparing", "ready", "completed", "cancelled"];
 
 // AUTH
 app.post("/api/auth/register", authLimiter, async (req, res) => {
@@ -364,6 +401,74 @@ app.get("/api/products", async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// Admin: all products (including unavailable)
+app.get("/api/products/all", authenticate, requireRole("admin"), async (req, res) => {
+    try {
+        const [rows] = await pool.query(`SELECT p.*, c.name AS category_name, c.slug AS category_slug FROM products p JOIN categories c ON p.category_id = c.id ORDER BY p.category_id, p.id`);
+        res.json(rows);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Admin: upload product image (multipart/form-data)
+app.post("/api/upload/product-image", authenticate, requireRole("admin"), uploadProductImage.single("image"), (req, res) => {
+    if (!req.file) return res.status(400).json({ error: "Tidak ada file yang diupload" });
+    const url = `/uploads/products/${req.file.filename}`;
+    res.json({ url });
+});
+
+// Admin: create product
+app.post("/api/products", authenticate, requireRole("admin"), async (req, res) => {
+    try {
+        const { name, category_id, price, description, image, is_available, is_featured } = req.body;
+        if (!name || !category_id || price == null) return res.status(400).json({ error: "Nama, kategori, dan harga wajib diisi" });
+        if (isNaN(Number(price)) || Number(price) < 0) return res.status(400).json({ error: "Harga tidak valid" });
+        const slug = sanitizeStr(name).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 120) + "-" + Date.now();
+        const imgVal = image ? sanitizeStr(image, 2000) : null;
+        const [result] = await pool.query(
+            "INSERT INTO products (category_id, name, slug, description, price, image, is_available, is_featured, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,NOW(),NOW())",
+            [Number(category_id), sanitizeStr(name, 150), slug, description ? sanitizeStr(description, 1000) : null, Number(price), imgVal, is_available ? 1 : 0, is_featured ? 1 : 0]
+        );
+        const [[product]] = await pool.query(`SELECT p.*, c.name AS category_name, c.slug AS category_slug FROM products p JOIN categories c ON p.category_id = c.id WHERE p.id = ?`, [result.insertId]);
+        res.status(201).json(product);
+    } catch (err) {
+        if (err.code === "ER_DUP_ENTRY") return res.status(400).json({ error: "Produk dengan nama serupa sudah ada, coba nama lain" });
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Admin: update product
+app.put("/api/products/:id", authenticate, requireRole("admin"), async (req, res) => {
+    try {
+        const [[ex]] = await pool.query("SELECT * FROM products WHERE id = ?", [req.params.id]);
+        if (!ex) return res.status(404).json({ error: "Produk tidak ditemukan" });
+        const { name, category_id, price, description, image, is_available, is_featured } = req.body;
+        if (!name || !category_id || price == null) return res.status(400).json({ error: "Nama, kategori, dan harga wajib diisi" });
+        if (isNaN(Number(price)) || Number(price) < 0) return res.status(400).json({ error: "Harga tidak valid" });
+        const imgVal = image ? sanitizeStr(image, 2000) : null;
+        await pool.query(
+            "UPDATE products SET category_id=?, name=?, description=?, price=?, image=?, is_available=?, is_featured=?, updated_at=NOW() WHERE id=?",
+            [Number(category_id), sanitizeStr(name, 150), description ? sanitizeStr(description, 1000) : null, Number(price), imgVal, is_available ? 1 : 0, is_featured ? 1 : 0, req.params.id]
+        );
+        const [[product]] = await pool.query(`SELECT p.*, c.name AS category_name, c.slug AS category_slug FROM products p JOIN categories c ON p.category_id = c.id WHERE p.id = ?`, [req.params.id]);
+        res.json(product);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Admin: delete product
+app.delete("/api/products/:id", authenticate, requireRole("admin"), async (req, res) => {
+    try {
+        const [[product]] = await pool.query("SELECT * FROM products WHERE id = ?", [req.params.id]);
+        if (!product) return res.status(404).json({ error: "Produk tidak ditemukan" });
+        // Remove local uploaded image file if any
+        if (product.image && product.image.startsWith("/uploads/")) {
+            const filePath = path.join(__dirname, product.image);
+            try { if (fs.existsSync(filePath)) fs.unlinkSync(filePath); } catch { /* ignore */ }
+        }
+        await pool.query("DELETE FROM products WHERE id = ?", [req.params.id]);
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // ORDERS
 app.get("/api/orders", authenticate, requireRole("admin"), async (req, res) => {
     try {
@@ -404,23 +509,15 @@ app.post("/api/orders", optionalAuth, async (req, res) => {
         const { customer_name, customer_phone, type, table_number, payment_method, notes, items } = req.body;
 
         // ── Validation ──────────────────────────────────────────────────────
-        if (!customer_name || sanitizeStr(customer_name).length < 2)
-            { await conn.rollback(); conn.release(); return res.status(400).json({ error: "Nama pelanggan wajib diisi (min 2 karakter)" }); }
-        if (!type || !validOrderTypes.includes(type))
-            { await conn.rollback(); conn.release(); return res.status(400).json({ error: "Tipe pesanan tidak valid" }); }
-        if (payment_method && !validPayments.includes(payment_method))
-            { await conn.rollback(); conn.release(); return res.status(400).json({ error: "Metode pembayaran tidak valid" }); }
-        if (!isValidPhone(customer_phone))
-            { await conn.rollback(); conn.release(); return res.status(400).json({ error: "Nomor telepon tidak valid" }); }
-        if (!Array.isArray(items) || items.length === 0)
-            { await conn.rollback(); conn.release(); return res.status(400).json({ error: "Pesanan harus memiliki minimal 1 item" }); }
-        if (items.length > 50)
-            { await conn.rollback(); conn.release(); return res.status(400).json({ error: "Pesanan terlalu banyak item" }); }
+        if (!customer_name || sanitizeStr(customer_name).length < 2) { await conn.rollback(); conn.release(); return res.status(400).json({ error: "Nama pelanggan wajib diisi (min 2 karakter)" }); }
+        if (!type || !validOrderTypes.includes(type)) { await conn.rollback(); conn.release(); return res.status(400).json({ error: "Tipe pesanan tidak valid" }); }
+        if (payment_method && !validPayments.includes(payment_method)) { await conn.rollback(); conn.release(); return res.status(400).json({ error: "Metode pembayaran tidak valid" }); }
+        if (!isValidPhone(customer_phone)) { await conn.rollback(); conn.release(); return res.status(400).json({ error: "Nomor telepon tidak valid" }); }
+        if (!Array.isArray(items) || items.length === 0) { await conn.rollback(); conn.release(); return res.status(400).json({ error: "Pesanan harus memiliki minimal 1 item" }); }
+        if (items.length > 50) { await conn.rollback(); conn.release(); return res.status(400).json({ error: "Pesanan terlalu banyak item" }); }
         for (const item of items) {
-            if (!item.product_id || !item.product_name || item.price == null || !item.quantity)
-                { await conn.rollback(); conn.release(); return res.status(400).json({ error: "Data item pesanan tidak lengkap" }); }
-            if (item.quantity < 1 || item.quantity > 99)
-                { await conn.rollback(); conn.release(); return res.status(400).json({ error: "Jumlah item tidak valid" }); }
+            if (!item.product_id || !item.product_name || item.price == null || !item.quantity) { await conn.rollback(); conn.release(); return res.status(400).json({ error: "Data item pesanan tidak lengkap" }); }
+            if (item.quantity < 1 || item.quantity > 99) { await conn.rollback(); conn.release(); return res.status(400).json({ error: "Jumlah item tidak valid" }); }
         }
         // ────────────────────────────────────────────────────────────────────
 

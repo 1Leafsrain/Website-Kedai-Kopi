@@ -18,6 +18,12 @@ export default defineConfig({
         changeOrigin: true,
         secure: false,    // accept self-signed backend cert in dev
       },
+      '/uploads': {
+        // Proxy uploaded product images from the API server
+        target: 'https://localhost:3443',
+        changeOrigin: true,
+        secure: false,
+      },
     },
   },
 })

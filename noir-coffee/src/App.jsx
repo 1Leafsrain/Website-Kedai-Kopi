@@ -105,6 +105,18 @@ export default function App() {
   const [galleryDeleteId, setGalleryDeleteId] = useState(null);
   const [navOpen, setNavOpen] = useState(false);
 
+  // ─── Menu Admin CRUD ─────────────────────────────────────────────────────
+  const [menuAll, setMenuAll] = useState([]);
+  const [menuFormOpen, setMenuFormOpen] = useState(false);
+  const [editingMenu, setEditingMenu] = useState(null);
+  const [menuForm, setMenuForm] = useState({ name: "", category_id: "", price: "", description: "", image: "", is_available: true, is_featured: false });
+  const [menuFormError, setMenuFormError] = useState("");
+  const [menuFormLoading, setMenuFormLoading] = useState(false);
+  const [menuDeleteId, setMenuDeleteId] = useState(null);
+  const [menuImageMode, setMenuImageMode] = useState("url"); // "url" | "file"
+  const [menuImageFile, setMenuImageFile] = useState(null);
+  const [menuImageUploading, setMenuImageUploading] = useState(false);
+
   // ─── CSRF token ──────────────────────────────────────────────────────────
   const [csrfToken, setCsrfToken] = useState(null);
   const csrfRef = useRef(null); // sync ref — always holds latest token for immediate use
@@ -290,6 +302,100 @@ export default function App() {
     finally { setGalleryLoading(false); }
   };
 
+  // ─── Menu Admin helpers ───────────────────────────────────────────────────
+  const fetchMenuAll = async (token) => {
+    const tk = token !== undefined ? token : authToken;
+    if (!tk) return;
+    try {
+      const res = await fetch("/api/products/all", { headers: authHeaders(tk) });
+      if (!res.ok) {
+        // Fallback: endpoint belum tersedia (server lama), pakai data menu publik
+        setMenuAll(menu.length > 0 ? menu : []);
+        return;
+      }
+      const data = await res.json();
+      setMenuAll(Array.isArray(data) ? data : []);
+    } catch { setMenuAll(menu.length > 0 ? menu : []); }
+  };
+
+  const openAddMenu = () => {
+    setEditingMenu(null);
+    const firstCat = categories.find(c => c.id !== "all");
+    setMenuForm({ name: "", category_id: firstCat?.id || "", price: "", description: "", image: "", is_available: true, is_featured: false });
+    setMenuFormError("");
+    setMenuImageMode("url");
+    setMenuImageFile(null);
+    setMenuFormOpen(true);
+  };
+
+  const openEditMenu = (p) => {
+    setEditingMenu(p);
+    setMenuForm({ name: p.name, category_id: p.category_id, price: p.price, description: p.description || "", image: p.image || "", is_available: p.is_available === 1, is_featured: p.is_featured === 1 });
+    setMenuFormError("");
+    setMenuImageMode("url");
+    setMenuImageFile(null);
+    setMenuFormOpen(true);
+  };
+
+  const uploadMenuImage = async (file) => {
+    if (!file) return null;
+    setMenuImageUploading(true);
+    try {
+      const formData = new FormData();
+      formData.append("image", file);
+      const csrfTk = await fetchCsrfToken();
+      const res = await fetch("/api/upload/product-image", {
+        method: "POST",
+        credentials: "include",
+        headers: {
+          ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+          ...(csrfTk ? { "x-csrf-token": csrfTk } : {}),
+        },
+        body: formData,
+      });
+      const data = await res.json();
+      if (!res.ok) { setMenuFormError(data.error || "Gagal upload gambar"); return null; }
+      return data.url;
+    } catch { setMenuFormError("Gagal upload gambar"); return null; }
+    finally { setMenuImageUploading(false); }
+  };
+
+  const saveMenu = async () => {
+    if (!menuForm.name.trim()) return setMenuFormError("Nama produk wajib diisi");
+    if (!menuForm.category_id) return setMenuFormError("Kategori wajib dipilih");
+    if (menuForm.price === "" || isNaN(Number(menuForm.price)) || Number(menuForm.price) < 0) return setMenuFormError("Harga tidak valid");
+    setMenuFormError("");
+    setMenuFormLoading(true);
+    try {
+      let imageUrl = menuForm.image;
+      if (menuImageMode === "file" && menuImageFile) {
+        const uploaded = await uploadMenuImage(menuImageFile);
+        if (!uploaded) { setMenuFormLoading(false); return; }
+        imageUrl = uploaded;
+      }
+      const body = { ...menuForm, image: imageUrl || null, price: Number(menuForm.price), category_id: Number(menuForm.category_id), is_available: menuForm.is_available ? 1 : 0, is_featured: menuForm.is_featured ? 1 : 0 };
+      const method = editingMenu ? "PUT" : "POST";
+      const url = editingMenu ? `/api/products/${editingMenu.id}` : "/api/products";
+      const res = await fetch(url, { method, credentials: "include", headers: secureHeaders(authToken), body: JSON.stringify(body) });
+      const data = await res.json();
+      if (!res.ok) return setMenuFormError(data.error || "Gagal menyimpan produk");
+      setMenuFormOpen(false);
+      await Promise.all([fetchMenuAll(), fetchMenu()]);
+      showToast(editingMenu ? "Produk diperbarui" : "Produk ditambahkan");
+    } catch { setMenuFormError("Terjadi kesalahan, coba lagi"); }
+    finally { setMenuFormLoading(false); }
+  };
+
+  const deleteMenu = async (id) => {
+    try {
+      const res = await fetch(`/api/products/${id}`, { method: "DELETE", credentials: "include", headers: secureHeaders(authToken) });
+      if (!res.ok) { const d = await res.json(); showToast(d.error || "Gagal menghapus"); return; }
+      setMenuDeleteId(null);
+      await Promise.all([fetchMenuAll(), fetchMenu()]);
+      showToast("Produk dihapus");
+    } catch { showToast("Gagal menghapus produk"); }
+  };
+
   const openAddGallery = () => {
     setEditingGallery(null);
     setGalleryForm({ title: "", description: "", src_url: "", thumb_url: "", category: "kopi", is_tall: false, sort_order: galleryPhotos.length + 1 });
@@ -337,9 +443,9 @@ export default function App() {
   useEffect(() => {
     // ─── HTTPS redirect (production safety) ─────────────────────────────
     if (typeof window !== "undefined" &&
-        window.location.protocol === "http:" &&
-        window.location.hostname !== "localhost" &&
-        !window.location.hostname.startsWith("127.")) {
+      window.location.protocol === "http:" &&
+      window.location.hostname !== "localhost" &&
+      !window.location.hostname.startsWith("127.")) {
       window.location.replace(window.location.href.replace(/^http:/, "https:"));
       return;
     }
@@ -366,7 +472,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (page === "admin") { fetchOrders(); fetchStats(); fetchTables(); fetchUserList(); fetchGallery(); setAdminView("dashboard"); setReportData(null); }
+    if (page === "admin") { fetchOrders(); fetchStats(); fetchTables(); fetchUserList(); fetchGallery(); fetchMenuAll(); setAdminView("dashboard"); setReportData(null); }
     if (page === "history" && currentUser) { fetchMyOrders(); setHistoryExpandedId(null); }
     logGaEvent("page_view", { page_name: page, page_location: typeof window !== "undefined" ? window.location.href : "/" });
   }, [page]);
@@ -1208,19 +1314,29 @@ export default function App() {
           </div>
           <div className="featured-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(260px,1fr))", gap: 1, background: "rgba(138,138,126,.1)", margin: "0 0 0" }}>
             {featured.map((item, i) => (
-              <div key={item.id} className="card-hover card-lift" style={{ background: "#0a0a08", padding: "2.5rem 2rem", position: "relative", overflow: "hidden", borderTop: "2px solid rgba(200,169,110,.18)" }}>
-                <div style={{ position: "absolute", bottom: "1rem", right: "1.5rem", fontFamily: "'Cormorant Garamond',serif", fontSize: "4rem", color: "rgba(200,169,110,.05)", lineHeight: 1, pointerEvents: "none", userSelect: "none" }}>{String(i + 1).padStart(2, "0")}</div>
-                <div style={{ display: "flex", alignItems: "center", gap: ".6rem", fontSize: ".65rem", letterSpacing: ".25em", textTransform: "uppercase", color: "#c8a96e", marginBottom: ".75rem" }}>
-                  <span className="cat-icon">{getCatIcon(item.category_slug)}</span>
-                  {item.category_name}
-                </div>
-                <h3 className="serif" style={{ fontSize: "1.6rem", marginBottom: ".75rem", lineHeight: 1.1 }}>{item.name}</h3>
-                <p style={{ color: "#8a8a7e", fontSize: ".78rem", lineHeight: 1.7, marginBottom: "1.5rem" }}>{item.description}</p>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <span style={{ color: "#c8a96e", fontSize: ".85rem" }}>{rp(item.price)}</span>
-                  <button onClick={() => addToCart(item)} style={{ background: "none", border: "1px solid rgba(200,169,110,.3)", color: "#c8a96e", width: 44, height: 44, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "1.2rem", transition: "all .2s", flexShrink: 0 }}
-                    onMouseOver={e => { e.currentTarget.style.background = "#c8a96e"; e.currentTarget.style.color = "#0a0a08"; }}
-                    onMouseOut={e => { e.currentTarget.style.background = "none"; e.currentTarget.style.color = "#c8a96e"; }}>+</button>
+              <div key={item.id} className="card-hover card-lift" style={{ background: "#0a0a08", position: "relative", overflow: "hidden", borderTop: "2px solid rgba(200,169,110,.18)" }}>
+                {item.image && (
+                  <div style={{ height: 160, overflow: "hidden", position: "relative" }}>
+                    <img src={item.image} alt={item.name} style={{ width: "100%", height: "100%", objectFit: "cover", filter: "brightness(.85) saturate(.9)", transition: "transform .45s ease, filter .45s ease" }}
+                      onError={e => { e.currentTarget.parentElement.style.display = "none"; }}
+                      onMouseOver={e => { e.currentTarget.style.transform = "scale(1.06)"; e.currentTarget.style.filter = "brightness(.95) saturate(1)"; }}
+                      onMouseOut={e => { e.currentTarget.style.transform = "scale(1)"; e.currentTarget.style.filter = "brightness(.85) saturate(.9)"; }} />
+                  </div>
+                )}
+                <div style={{ padding: "2.5rem 2rem", position: "relative" }}>
+                  <div style={{ position: "absolute", bottom: "1rem", right: "1.5rem", fontFamily: "'Cormorant Garamond',serif", fontSize: "4rem", color: "rgba(200,169,110,.05)", lineHeight: 1, pointerEvents: "none", userSelect: "none" }}>{String(i + 1).padStart(2, "0")}</div>
+                  <div style={{ display: "flex", alignItems: "center", gap: ".6rem", fontSize: ".65rem", letterSpacing: ".25em", textTransform: "uppercase", color: "#c8a96e", marginBottom: ".75rem" }}>
+                    <span className="cat-icon">{getCatIcon(item.category_slug)}</span>
+                    {item.category_name}
+                  </div>
+                  <h3 className="serif" style={{ fontSize: "1.6rem", marginBottom: ".75rem", lineHeight: 1.1 }}>{item.name}</h3>
+                  <p style={{ color: "#8a8a7e", fontSize: ".78rem", lineHeight: 1.7, marginBottom: "1.5rem" }}>{item.description}</p>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <span style={{ color: "#c8a96e", fontSize: ".85rem" }}>{rp(item.price)}</span>
+                    <button onClick={() => addToCart(item)} style={{ background: "none", border: "1px solid rgba(200,169,110,.3)", color: "#c8a96e", width: 44, height: 44, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "1.2rem", transition: "all .2s", flexShrink: 0 }}
+                      onMouseOver={e => { e.currentTarget.style.background = "#c8a96e"; e.currentTarget.style.color = "#0a0a08"; }}
+                      onMouseOut={e => { e.currentTarget.style.background = "none"; e.currentTarget.style.color = "#c8a96e"; }}>+</button>
+                  </div>
                 </div>
               </div>
             ))}
@@ -1249,24 +1365,34 @@ export default function App() {
             ) : (
               <div className="menu-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(300px,1fr))", gap: 1, background: "rgba(138,138,126,.08)" }}>
                 {filteredMenu.map(item => (
-                  <div key={item.id} className="card-hover card-lift menu-item-accent" style={{ background: "#0a0a08", padding: "1.75rem 2rem" }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: ".6rem" }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: ".6rem", flex: 1, paddingRight: "1rem" }}>
-                        <span className="cat-icon" style={{ fontSize: ".85rem", width: 30, height: 30 }}>{getCatIcon(item.category_slug)}</span>
-                        <h4 className="serif" style={{ fontSize: "1.15rem", lineHeight: 1.2 }}>{item.name}</h4>
+                  <div key={item.id} className="card-hover card-lift menu-item-accent" style={{ background: "#0a0a08", overflow: "hidden" }}>
+                    {item.image && (
+                      <div style={{ height: 140, overflow: "hidden" }}>
+                        <img src={item.image} alt={item.name} style={{ width: "100%", height: "100%", objectFit: "cover", filter: "brightness(.8) saturate(.85)", transition: "transform .45s ease, filter .45s ease" }}
+                          onError={e => { e.currentTarget.parentElement.style.display = "none"; }}
+                          onMouseOver={e => { e.currentTarget.style.transform = "scale(1.06)"; e.currentTarget.style.filter = "brightness(.9) saturate(1)"; }}
+                          onMouseOut={e => { e.currentTarget.style.transform = "scale(1)"; e.currentTarget.style.filter = "brightness(.8) saturate(.85)"; }} />
                       </div>
-                      <span style={{ color: "#c8a96e", fontSize: ".85rem", whiteSpace: "nowrap" }}>{rp(item.price)}</span>
-                    </div>
-                    <p style={{ color: "#8a8a7e", fontSize: ".78rem", lineHeight: 1.7, marginBottom: "1.25rem", paddingLeft: "2.4rem" }}>{item.description}</p>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingLeft: "2.4rem" }}>
-                      <span style={{ fontSize: ".6rem", letterSpacing: ".15em", textTransform: "uppercase", color: "#4a4a42" }}>
-                        {item.is_featured === 1 && "★ Featured · "}{item.category_name}
-                      </span>
-                      <button onClick={() => addToCart(item)} style={{ background: "none", border: "none", color: "#8a8a7e", fontSize: ".7rem", letterSpacing: ".15em", textTransform: "uppercase", borderBottom: "1px solid transparent", transition: "all .2s", paddingBottom: ".1rem", minHeight: 44, display: "inline-flex", alignItems: "center" }}
-                        onMouseOver={e => { e.currentTarget.style.color = "#c8a96e"; e.currentTarget.style.borderBottomColor = "rgba(200,169,110,.4)"; }}
-                        onMouseOut={e => { e.currentTarget.style.color = "#8a8a7e"; e.currentTarget.style.borderBottomColor = "transparent"; }}>
-                        + Pesan
-                      </button>
+                    )}
+                    <div style={{ padding: "1.75rem 2rem" }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: ".6rem" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: ".6rem", flex: 1, paddingRight: "1rem" }}>
+                          <span className="cat-icon" style={{ fontSize: ".85rem", width: 30, height: 30 }}>{getCatIcon(item.category_slug)}</span>
+                          <h4 className="serif" style={{ fontSize: "1.15rem", lineHeight: 1.2 }}>{item.name}</h4>
+                        </div>
+                        <span style={{ color: "#c8a96e", fontSize: ".85rem", whiteSpace: "nowrap" }}>{rp(item.price)}</span>
+                      </div>
+                      <p style={{ color: "#8a8a7e", fontSize: ".78rem", lineHeight: 1.7, marginBottom: "1.25rem", paddingLeft: "2.4rem" }}>{item.description}</p>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingLeft: "2.4rem" }}>
+                        <span style={{ fontSize: ".6rem", letterSpacing: ".15em", textTransform: "uppercase", color: "#4a4a42" }}>
+                          {item.is_featured === 1 && "★ Featured · "}{item.category_name}
+                        </span>
+                        <button onClick={() => addToCart(item)} style={{ background: "none", border: "none", color: "#8a8a7e", fontSize: ".7rem", letterSpacing: ".15em", textTransform: "uppercase", borderBottom: "1px solid transparent", transition: "all .2s", paddingBottom: ".1rem", minHeight: 44, display: "inline-flex", alignItems: "center" }}
+                          onMouseOver={e => { e.currentTarget.style.color = "#c8a96e"; e.currentTarget.style.borderBottomColor = "rgba(200,169,110,.4)"; }}
+                          onMouseOut={e => { e.currentTarget.style.color = "#8a8a7e"; e.currentTarget.style.borderBottomColor = "transparent"; }}>
+                          + Pesan
+                        </button>
+                      </div>
                     </div>
                   </div>
                 ))}
@@ -1704,7 +1830,7 @@ export default function App() {
             <div className="admin-sidebar" style={{ background: "#1a1a16", borderRight: "1px solid rgba(138,138,126,.1)", padding: "2rem 0" }}>
               <div style={{ fontSize: ".6rem", letterSpacing: ".3em", textTransform: "uppercase", color: "#4a4a42", padding: "0 1.5rem", marginBottom: "1rem" }}>Manajemen</div>
               {[{ icon: "⬡", label: "Dashboard", view: "dashboard" }, { icon: "◈", label: "Pesanan", view: "pesanan" }, { icon: "◉", label: "Meja", view: "meja" }, { icon: "◎", label: "Produk", view: "produk" }, { icon: "◫", label: "Pengguna", view: "pengguna" }, { icon: "�", label: "Gallery", view: "gallery" }, { icon: "�📊", label: "Laporan", view: "laporan" }, { icon: "📈", label: "Analytics", view: "analytics" }].map(({ icon, label, view }) => (
-                <button key={label} onClick={() => { setAdminView(view); if (view === "laporan") { const d = new Date().toISOString().slice(0, 10); const f = { start: d, end: d }; setReportFilter(f); fetchReport(f); } }} style={{ background: "none", border: "none", borderLeft: `2px solid ${adminView === view ? "#c8a96e" : "transparent"}`, padding: ".65rem 1.5rem", display: "flex", gap: ".75rem", alignItems: "center", color: adminView === view ? "#c8a96e" : "#8a8a7e", fontSize: ".8rem", width: "100%", textAlign: "left", cursor: "pointer", transition: "color .2s, border-color .2s" }}>
+                <button key={label} onClick={() => { setAdminView(view); if (view === "laporan") { const d = new Date().toISOString().slice(0, 10); const f = { start: d, end: d }; setReportFilter(f); fetchReport(f); } if (view === "produk") fetchMenuAll(); }} style={{ background: "none", border: "none", borderLeft: `2px solid ${adminView === view ? "#c8a96e" : "transparent"}`, padding: ".65rem 1.5rem", display: "flex", gap: ".75rem", alignItems: "center", color: adminView === view ? "#c8a96e" : "#8a8a7e", fontSize: ".8rem", width: "100%", textAlign: "left", cursor: "pointer", transition: "color .2s, border-color .2s" }}>
                   {icon} {label}
                 </button>
               ))}
@@ -1909,23 +2035,209 @@ export default function App() {
                 </div>
               )}
 
-              {/* Products list */}
-              {(adminView === "dashboard" || adminView === "produk") && <div style={{ marginTop: adminView === "produk" ? "0" : "3rem" }}>
+              {/* Products list (dashboard compact) */}
+              {adminView === "dashboard" && <div style={{ marginTop: "3rem" }}>
                 <div style={{ fontSize: ".65rem", letterSpacing: ".3em", textTransform: "uppercase", color: "#c8a96e", marginBottom: "1.25rem" }}>Produk</div>
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(240px,1fr))", gap: 1, background: "rgba(138,138,126,.08)" }}>
                   {menu.map(p => (
-                    <div key={p.id} style={{ background: "#0a0a08", padding: "1.25rem 1.5rem" }}>
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-                        <span className="serif" style={{ fontSize: "1rem" }}>{p.name}</span>
-                        <span style={{ color: "#c8a96e", fontSize: ".8rem" }}>{rp(p.price)}</span>
-                      </div>
-                      <div style={{ fontSize: ".65rem", letterSpacing: ".15em", textTransform: "uppercase", color: "#4a4a42", marginTop: ".4rem" }}>
-                        {p.category_name}{p.is_featured === 1 && " · ★"}
+                    <div key={p.id} style={{ background: "#0a0a08", padding: "1.25rem 1.5rem", display: "flex", gap: "1rem", alignItems: "center" }}>
+                      {p.image && <img src={p.image} alt={p.name} style={{ width: 44, height: 44, objectFit: "cover", flexShrink: 0, border: "1px solid rgba(138,138,126,.15)" }} onError={e => { e.currentTarget.style.display = "none"; }} />}
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                          <span className="serif" style={{ fontSize: "1rem" }}>{p.name}</span>
+                          <span style={{ color: "#c8a96e", fontSize: ".8rem", flexShrink: 0, paddingLeft: ".5rem" }}>{rp(p.price)}</span>
+                        </div>
+                        <div style={{ fontSize: ".65rem", letterSpacing: ".15em", textTransform: "uppercase", color: "#4a4a42", marginTop: ".4rem" }}>
+                          {p.category_name}{p.is_featured === 1 && " · ★"}
+                        </div>
                       </div>
                     </div>
                   ))}
                 </div>
               </div>}
+
+              {/* ─── PRODUK VIEW (full CRUD) ─────────────────────────────── */}
+              {adminView === "produk" && (
+                <div>
+                  {/* Menu Form Modal */}
+                  {menuFormOpen && (
+                    <div style={{ position: "fixed", inset: 0, zIndex: 500 }}>
+                      <div onClick={() => setMenuFormOpen(false)} style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,.8)" }} />
+                      <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%,-50%)", background: "#1a1a16", border: "1px solid rgba(200,169,110,.2)", padding: "2.5rem", width: "min(540px,95vw)", maxHeight: "92vh", overflowY: "auto" }}>
+                        <h3 className="serif" style={{ fontSize: "1.5rem", marginBottom: "1.75rem" }}>
+                          {editingMenu ? "Edit Produk" : "Tambah Produk"}
+                        </h3>
+                        {menuFormError && (
+                          <div style={{ marginBottom: "1rem", padding: ".7rem 1rem", borderLeft: "2px solid #c05050", background: "rgba(139,46,46,.1)", fontSize: ".8rem", color: "#d06060" }}>{menuFormError}</div>
+                        )}
+                        <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
+                          {/* Nama */}
+                          <div>
+                            <label style={{ display: "block", fontSize: ".6rem", letterSpacing: ".2em", textTransform: "uppercase", color: "#8a8a7e", marginBottom: ".4rem" }}>Nama Produk *</label>
+                            <input className="input-noir" placeholder="Contoh: Espresso, Avocado Toast" value={menuForm.name} onChange={e => setMenuForm(f => ({ ...f, name: e.target.value }))} />
+                          </div>
+                          {/* Kategori + Harga */}
+                          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem" }}>
+                            <div>
+                              <label style={{ display: "block", fontSize: ".6rem", letterSpacing: ".2em", textTransform: "uppercase", color: "#8a8a7e", marginBottom: ".4rem" }}>Kategori *</label>
+                              <select className="input-noir" value={menuForm.category_id} onChange={e => setMenuForm(f => ({ ...f, category_id: e.target.value }))}>
+                                <option value="" style={{ background: "#1a1a16" }}>— Pilih Kategori —</option>
+                                {categories.filter(c => c.id !== "all").map(c => (
+                                  <option key={c.id} value={c.id} style={{ background: "#1a1a16" }}>{c.name}</option>
+                                ))}
+                              </select>
+                            </div>
+                            <div>
+                              <label style={{ display: "block", fontSize: ".6rem", letterSpacing: ".2em", textTransform: "uppercase", color: "#8a8a7e", marginBottom: ".4rem" }}>Harga (Rp) *</label>
+                              <input className="input-noir" type="number" min="0" placeholder="25000" value={menuForm.price} onChange={e => setMenuForm(f => ({ ...f, price: e.target.value }))} />
+                            </div>
+                          </div>
+                          {/* Deskripsi */}
+                          <div>
+                            <label style={{ display: "block", fontSize: ".6rem", letterSpacing: ".2em", textTransform: "uppercase", color: "#8a8a7e", marginBottom: ".4rem" }}>Deskripsi</label>
+                            <textarea className="input-noir" rows={3} placeholder="Deskripsi singkat produk..." value={menuForm.description} onChange={e => setMenuForm(f => ({ ...f, description: e.target.value }))} style={{ resize: "vertical", minHeight: 72 }} />
+                          </div>
+                          {/* Foto */}
+                          <div>
+                            <label style={{ display: "block", fontSize: ".6rem", letterSpacing: ".2em", textTransform: "uppercase", color: "#8a8a7e", marginBottom: ".6rem" }}>Foto Produk</label>
+                            {/* Toggle URL / Unggah */}
+                            <div style={{ display: "flex", marginBottom: ".75rem", border: "1px solid rgba(138,138,126,.2)" }}>
+                              {[["url", "🔗 URL / Link"], ["file", "📁 Unggah Lokal"]].map(([mode, label]) => (
+                                <button key={mode} type="button" onClick={() => { setMenuImageMode(mode); setMenuImageFile(null); if (mode === "file") setMenuForm(f => ({ ...f, image: "" })); }}
+                                  style={{ flex: 1, background: menuImageMode === mode ? "rgba(200,169,110,.12)" : "none", border: "none", borderBottom: `2px solid ${menuImageMode === mode ? "#c8a96e" : "transparent"}`, color: menuImageMode === mode ? "#c8a96e" : "#8a8a7e", padding: ".5rem", fontSize: ".68rem", letterSpacing: ".12em", textTransform: "uppercase", cursor: "pointer", transition: "all .2s" }}>
+                                  {label}
+                                </button>
+                              ))}
+                            </div>
+                            {menuImageMode === "url" ? (
+                              <input className="input-noir" placeholder="https://example.com/gambar.jpg" value={menuForm.image} onChange={e => setMenuForm(f => ({ ...f, image: e.target.value }))} />
+                            ) : (
+                              <div>
+                                <input type="file" accept="image/*" onChange={e => { const f = e.target.files?.[0] || null; setMenuImageFile(f); if (f) setMenuForm(fm => ({ ...fm, image: "" })); }}
+                                  style={{ width: "100%", background: "#1a1a16", border: "1px solid rgba(138,138,126,.2)", color: "#f0ede6", padding: ".7rem 1rem", fontSize: ".85rem", cursor: "pointer" }} />
+                                <p style={{ marginTop: ".4rem", fontSize: ".68rem", color: "#4a4a42" }}>Maks. 5 MB · Format: JPG, PNG, WEBP, GIF</p>
+                              </div>
+                            )}
+                            {/* Preview */}
+                            {(menuForm.image || menuImageFile) && (
+                              <div style={{ marginTop: ".75rem" }}>
+                                <div style={{ fontSize: ".58rem", letterSpacing: ".15em", textTransform: "uppercase", color: "#4a4a42", marginBottom: ".4rem" }}>Preview</div>
+                                <img
+                                  src={menuImageFile ? URL.createObjectURL(menuImageFile) : menuForm.image}
+                                  alt="preview"
+                                  style={{ maxHeight: 140, maxWidth: "100%", objectFit: "cover", border: "1px solid rgba(138,138,126,.2)" }}
+                                  onError={e => { e.currentTarget.style.display = "none"; }}
+                                />
+                              </div>
+                            )}
+                          </div>
+                          {/* Switches */}
+                          <div style={{ display: "flex", gap: "2rem" }}>
+                            <label style={{ display: "flex", alignItems: "center", gap: ".6rem", cursor: "pointer" }}>
+                              <input type="checkbox" checked={!!menuForm.is_available} onChange={e => setMenuForm(f => ({ ...f, is_available: e.target.checked }))} style={{ accentColor: "#c8a96e", width: 16, height: 16 }} />
+                              <span style={{ fontSize: ".68rem", letterSpacing: ".15em", textTransform: "uppercase", color: "#8a8a7e" }}>Tersedia</span>
+                            </label>
+                            <label style={{ display: "flex", alignItems: "center", gap: ".6rem", cursor: "pointer" }}>
+                              <input type="checkbox" checked={!!menuForm.is_featured} onChange={e => setMenuForm(f => ({ ...f, is_featured: e.target.checked }))} style={{ accentColor: "#c8a96e", width: 16, height: 16 }} />
+                              <span style={{ fontSize: ".68rem", letterSpacing: ".15em", textTransform: "uppercase", color: "#8a8a7e" }}>★ Unggulan (Featured)</span>
+                            </label>
+                          </div>
+                        </div>
+                        <div style={{ display: "flex", gap: ".75rem", marginTop: "2rem" }}>
+                          <button className="btn-outline" style={{ flex: 1 }} onClick={() => setMenuFormOpen(false)}>Batal</button>
+                          <button className="btn-gold" style={{ flex: 1, opacity: menuFormLoading || menuImageUploading ? .6 : 1 }} onClick={saveMenu} disabled={menuFormLoading || menuImageUploading}>
+                            {menuImageUploading ? "Mengupload..." : menuFormLoading ? "Menyimpan..." : (editingMenu ? "Simpan Perubahan" : "Tambah Produk")}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Delete Confirm */}
+                  {menuDeleteId !== null && (
+                    <div style={{ position: "fixed", inset: 0, zIndex: 500 }}>
+                      <div onClick={() => setMenuDeleteId(null)} style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,.8)" }} />
+                      <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%,-50%)", background: "#1a1a16", border: "1px solid rgba(192,80,80,.3)", padding: "2.5rem", width: "min(380px,90vw)", textAlign: "center" }}>
+                        <div style={{ fontSize: "2rem", marginBottom: "1rem" }}>🗑</div>
+                        <h3 className="serif" style={{ fontSize: "1.4rem", marginBottom: ".75rem" }}>Hapus Produk?</h3>
+                        <p style={{ color: "#8a8a7e", fontSize: ".82rem", marginBottom: "2rem" }}>Tindakan ini tidak dapat dibatalkan. Produk yang sudah ada di pesanan tidak akan terpengaruh.</p>
+                        <div style={{ display: "flex", gap: ".75rem" }}>
+                          <button className="btn-outline" style={{ flex: 1 }} onClick={() => setMenuDeleteId(null)}>Batal</button>
+                          <button style={{ flex: 1, background: "rgba(192,80,80,.15)", border: "1px solid rgba(192,80,80,.4)", color: "#c05050", padding: ".65rem", fontSize: ".7rem", letterSpacing: ".2em", textTransform: "uppercase", cursor: "pointer" }} onClick={() => deleteMenu(menuDeleteId)}>Hapus</button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Header */}
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "2rem" }}>
+                    <div>
+                      <div style={{ fontSize: ".65rem", letterSpacing: ".3em", textTransform: "uppercase", color: "#c8a96e", marginBottom: ".25rem" }}>Manajemen Menu</div>
+                      <div style={{ color: "#8a8a7e", fontSize: ".82rem" }}>
+                        {menuAll.filter(p => p.is_available).length} tersedia · {menuAll.filter(p => !p.is_available).length} tidak aktif · {menuAll.length} total
+                      </div>
+                    </div>
+                    <button className="btn-gold" onClick={openAddMenu}>+ Tambah Produk</button>
+                  </div>
+
+                  {/* Product Table */}
+                  <div style={{ overflowX: "auto" }}>
+                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: ".8rem" }}>
+                      <thead>
+                        <tr>
+                          {["Foto", "Nama", "Kategori", "Harga", "Status", "Aksi"].map(h => (
+                            <th key={h} style={{ textAlign: "left", padding: ".65rem 1rem", fontSize: ".6rem", letterSpacing: ".2em", textTransform: "uppercase", color: "#8a8a7e", borderBottom: "1px solid rgba(138,138,126,.15)", fontWeight: 400 }}>{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {menuAll.map(p => (
+                          <tr key={p.id} onMouseOver={e => e.currentTarget.style.background = "rgba(200,169,110,.02)"} onMouseOut={e => e.currentTarget.style.background = "none"}>
+                            <td style={{ padding: ".6rem 1rem", borderBottom: "1px solid rgba(138,138,126,.07)" }}>
+                              {p.image
+                                ? <img src={p.image} alt={p.name} style={{ width: 48, height: 48, objectFit: "cover", border: "1px solid rgba(138,138,126,.2)" }} onError={e => { e.currentTarget.outerHTML = '<span style="font-size:1.5rem">🍽️</span>'; }} />
+                                : <span style={{ fontSize: "1.5rem", opacity: .35 }}>🍽️</span>
+                              }
+                            </td>
+                            <td style={{ padding: ".6rem 1rem", borderBottom: "1px solid rgba(138,138,126,.07)" }}>
+                              <span className="serif" style={{ fontSize: "1rem", color: "#f0ede6" }}>{p.name}</span>
+                              {p.is_featured === 1 && <span style={{ marginLeft: ".5rem", fontSize: ".6rem", color: "#c8a96e" }}>★</span>}
+                            </td>
+                            <td style={{ padding: ".6rem 1rem", borderBottom: "1px solid rgba(138,138,126,.07)", color: "#8a8a7e", fontSize: ".78rem" }}>{p.category_name}</td>
+                            <td style={{ padding: ".6rem 1rem", borderBottom: "1px solid rgba(138,138,126,.07)", color: "#c8a96e", fontFamily: "'Cormorant Garamond',serif", fontSize: "1rem" }}>{rp(p.price)}</td>
+                            <td style={{ padding: ".6rem 1rem", borderBottom: "1px solid rgba(138,138,126,.07)" }}>
+                              <span style={{ border: `1px solid ${p.is_available ? "rgba(92,138,92,.4)" : "rgba(138,138,126,.25)"}`, color: p.is_available ? "#5c8a5c" : "#4a4a42", padding: ".2rem .55rem", fontSize: ".58rem", letterSpacing: ".15em", textTransform: "uppercase" }}>
+                                {p.is_available ? "Tersedia" : "Nonaktif"}
+                              </span>
+                            </td>
+                            <td style={{ padding: ".6rem 1rem", borderBottom: "1px solid rgba(138,138,126,.07)" }}>
+                              <div style={{ display: "flex", gap: ".5rem" }}>
+                                <button onClick={() => openEditMenu(p)}
+                                  style={{ background: "none", border: "1px solid rgba(138,138,126,.2)", color: "#8a8a7e", padding: ".3rem .6rem", fontSize: ".65rem", letterSpacing: ".12em", textTransform: "uppercase", cursor: "pointer", transition: "all .2s" }}
+                                  onMouseOver={e => { e.currentTarget.style.borderColor = "rgba(200,169,110,.4)"; e.currentTarget.style.color = "#c8a96e"; }}
+                                  onMouseOut={e => { e.currentTarget.style.borderColor = "rgba(138,138,126,.2)"; e.currentTarget.style.color = "#8a8a7e"; }}>
+                                  Edit
+                                </button>
+                                <button onClick={() => setMenuDeleteId(p.id)}
+                                  style={{ background: "none", border: "1px solid rgba(138,138,126,.2)", color: "#8a8a7e", padding: ".3rem .6rem", fontSize: ".65rem", letterSpacing: ".12em", textTransform: "uppercase", cursor: "pointer", transition: "all .2s" }}
+                                  onMouseOver={e => { e.currentTarget.style.borderColor = "rgba(192,80,80,.4)"; e.currentTarget.style.color = "#c05050"; }}
+                                  onMouseOut={e => { e.currentTarget.style.borderColor = "rgba(138,138,126,.2)"; e.currentTarget.style.color = "#8a8a7e"; }}>
+                                  Hapus
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                        {menuAll.length === 0 && (
+                          <tr>
+                            <td colSpan={6} style={{ padding: "3rem", textAlign: "center", color: "#4a4a42", fontSize: ".85rem" }}>Belum ada produk. Klik "+ Tambah Produk" untuk menambahkan.</td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
 
               {/* ─── PENGGUNA VIEW ──────────────────────────────────────────── */}
               {adminView === "pengguna" && (

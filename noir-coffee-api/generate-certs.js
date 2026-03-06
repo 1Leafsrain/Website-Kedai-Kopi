@@ -4,7 +4,7 @@
  * Run once: node generate-certs.js
  */
 const selfsigned = require("selfsigned");
-const fs   = require("fs");
+const fs = require("fs");
 const path = require("path");
 
 const CERTS_DIR = path.join(__dirname, "certs");
@@ -14,13 +14,13 @@ if (!fs.existsSync(CERTS_DIR)) {
 }
 
 const attrs = [
-    { name: "commonName",       value: "localhost" },
+    { name: "commonName", value: "localhost" },
     { name: "organizationName", value: "Noir Coffee Dev" },
-    { name: "countryName",      value: "ID" },
+    { name: "countryName", value: "ID" },
 ];
 
 const opts = {
-    days:      365,
+    days: 365,
     algorithm: "sha256",
     extensions: [
         {
@@ -36,7 +36,7 @@ const opts = {
 (async () => {
     console.log("Generating self-signed SSL certificate...");
     const pems = await selfsigned.generate(attrs, opts);
-    fs.writeFileSync(path.join(CERTS_DIR, "key.pem"),  pems.private);
+    fs.writeFileSync(path.join(CERTS_DIR, "key.pem"), pems.private);
     fs.writeFileSync(path.join(CERTS_DIR, "cert.pem"), pems.cert);
     console.log("Certificates generated:");
     console.log("   certs/key.pem  - private key");
